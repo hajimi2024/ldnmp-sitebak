@@ -2,7 +2,7 @@
 
 set -Eeuo pipefail
 
-VERSION="0.1.3"
+VERSION="0.1.4"
 APP_NAME="LDNMP 单站备份恢复工具"
 
 WEB_ROOT="${SITEBAK_WEB_ROOT:-/home/web}"
@@ -200,22 +200,112 @@ read_db_config() {
     return 1
   }
 
+  read_db_config_file "$wp_config"
+}
+
+read_db_config_file() {
+  local wp_config="$1"
+
   DB_NAME="$(parse_wp_define "$wp_config" "DB_NAME")"
   DB_USER="$(parse_wp_define "$wp_config" "DB_USER")"
   DB_PASSWORD="$(parse_wp_define "$wp_config" "DB_PASSWORD")"
   DB_HOST="$(parse_wp_define "$wp_config" "DB_HOST")"
 
-  [[ -z "${DB_NAME:-}" ]] && DB_NAME="$(domain_to_db_name "$domain")"
+  if [[ -z "$DB_NAME" || -z "$DB_USER" ]]; then
+    err "无法从 wp-config.php 读取数据库名称或用户名。"
+    return 1
+  fi
   [[ -z "${DB_HOST:-}" ]] && DB_HOST="localhost"
   return 0
 }
 
+prepare_db_client() {
+  local operation="$1" host="$DB_HOST" port='' binary state
+  local candidates=()
+  DB_CONTAINER="${SITEBAK_DB_CONTAINER:-}"
+  DB_CLIENT=''
+  DB_CONNECT_ARGS=()
+  case "$operation" in
+    dump) candidates=(mysqldump mariadb-dump) ;;
+    mysql) candidates=(mysql mariadb) ;;
+    *) err "未知数据库操作。"; return 1 ;;
+  esac
+
+  if [[ "$host" =~ ^([^:]+):([0-9]+)$ ]]; then
+    host="${BASH_REMATCH[1]}"
+    port="${BASH_REMATCH[2]}"
+    if ((${#port} > 5)) || ((10#$port < 1 || 10#$port > 65535)); then
+      err "数据库端口不合法。"
+      return 1
+    fi
+  elif [[ "$host" == *:* ]]; then
+    err "当前版本不支持此 DB_HOST 格式：$host"
+    return 1
+  fi
+
+  # LDNMP uses DB_HOST=mysql and a container named mysql.
+  if [[ -z "$DB_CONTAINER" && "$host" != localhost && "$host" != 127.0.0.1 ]] && command -v docker >/dev/null 2>&1; then
+    if state="$(docker inspect --type container --format '{{.State.Running}}' "$host" 2>/dev/null)"; then
+      DB_CONTAINER="$host"
+    fi
+  fi
+  if [[ -n "$DB_CONTAINER" ]]; then
+    if ! command -v docker >/dev/null 2>&1; then
+      err "已指定数据库容器，但找不到 docker 命令。"
+      return 1
+    fi
+    if ! state="$(docker inspect --type container --format '{{.State.Running}}' "$DB_CONTAINER" 2>/dev/null)" || [[ "$state" != true ]]; then
+      err "数据库容器不存在或未运行：$DB_CONTAINER"
+      return 1
+    fi
+    for binary in "${candidates[@]}"; do
+      if docker exec "$DB_CONTAINER" sh -c 'command -v "$1" >/dev/null 2>&1' sh "$binary"; then
+        DB_CLIENT="$binary"
+        break
+      fi
+    done
+    DB_CONNECT_ARGS=(-h 127.0.0.1 --protocol=TCP -P "${port:-3306}")
+  else
+    for binary in "${candidates[@]}"; do
+      if command -v "$binary" >/dev/null 2>&1; then
+        DB_CLIENT="$binary"
+        break
+      fi
+    done
+    DB_CONNECT_ARGS=(-h "$host")
+    [[ -z "$port" ]] || DB_CONNECT_ARGS+=(--protocol=TCP -P "$port")
+  fi
+  if [[ -z "$DB_CLIENT" ]]; then
+    err "未找到可用的数据库工具：${candidates[*]}。"
+    err "数据库位置：${DB_CONTAINER:-$host}。LDNMP 请确认 mysql 容器已运行；自定义容器可设置 SITEBAK_DB_CONTAINER。"
+    return 1
+  fi
+  info "数据库工具：${DB_CONTAINER:+容器 $DB_CONTAINER / }$DB_CLIENT" >&2
+}
+
+run_db_client() {
+  if [[ -n "$DB_CONTAINER" ]]; then
+    local flags=()
+    [[ "$DB_CLIENT" != mysql && "$DB_CLIENT" != mariadb ]] || flags+=(-i)
+    MYSQL_PWD="${DB_PASSWORD:-}" docker exec "${flags[@]}" -e MYSQL_PWD "$DB_CONTAINER" \
+      "$DB_CLIENT" "${DB_CONNECT_ARGS[@]}" -u "$DB_USER" "$@"
+  else
+    MYSQL_PWD="${DB_PASSWORD:-}" "$DB_CLIENT" "${DB_CONNECT_ARGS[@]}" -u "$DB_USER" "$@"
+  fi
+}
+
 run_mysqldump() {
-  MYSQL_PWD="${DB_PASSWORD:-}" mysqldump -h "$DB_HOST" -u "$DB_USER" "$@"
+  local client_version
+  local options=(--single-transaction --quick --default-character-set=utf8mb4 --no-tablespaces)
+  client_version="$(run_db_client --version)" || return 1
+  if [[ "$DB_CLIENT" == mysqldump && "$client_version" != *MariaDB* ]]; then
+    options+=(--set-gtid-purged=OFF)
+  fi
+  run_db_client "${options[@]}" "$@"
 }
 
 run_mysql() {
-  MYSQL_PWD="${DB_PASSWORD:-}" mysql -h "$DB_HOST" -u "$DB_USER" "$@"
+  run_db_client "$@"
 }
 
 find_nginx_files() {
@@ -276,7 +366,8 @@ write_manifest() {
 EOF
 }
 
-backup_site() {
+backup_site() (
+  umask 077
   local domain="$1"
   domain="$(sanitize_domain "$domain")"
 
@@ -292,7 +383,7 @@ backup_site() {
     return 1
   fi
 
-  need_cmd tar gzip mysqldump awk sed find grep date
+  need_cmd tar gzip awk sed find grep date
   mkdir -p "$BACKUP_DIR"
   read_db_config "$domain"
 
@@ -300,21 +391,30 @@ backup_site() {
     err "无法从 wp-config.php 读取数据库信息。"
     return 1
   fi
+  if [[ ! "$DB_NAME" =~ ^[A-Za-z0-9_-]+$ ]]; then
+    err "数据库名称包含不支持的字符。"
+    return 1
+  fi
+  prepare_db_client dump
 
-  local timestamp archive tmp created_at nginx_count cert_count
+  local timestamp archive tmp created_at nginx_count cert_count partial=''
   timestamp="$(date +"%Y%m%d_%H%M%S")"
   created_at="$(date -Iseconds)"
   archive="$BACKUP_DIR/${domain}_${timestamp}.tar.gz"
+  [[ ! -e "$archive" ]] || { err "同名备份已存在，请稍后重试。"; return 1; }
   tmp="$(mktemp -d "/tmp/sitebak.${domain}.XXXXXX")"
 
-  trap 'rm -rf "$tmp"' RETURN
+  trap 'rm -rf -- "$tmp"; [[ -z "$partial" ]] || rm -f -- "$partial"' EXIT
 
   info "正在备份站点文件..."
   mkdir -p "$tmp/files" "$tmp/database" "$tmp/nginx" "$tmp/certs" "$tmp/meta"
   tar -C "$dir" -czf "$tmp/files/site-files.tar.gz" .
 
   info "正在导出数据库：$DB_NAME"
-  run_mysqldump --single-transaction --quick --default-character-set=utf8mb4 "$DB_NAME" | gzip >"$tmp/database/${DB_NAME}.sql.gz"
+  if ! run_mysqldump "$DB_NAME" | gzip >"$tmp/database/${DB_NAME}.sql.gz"; then
+    err "数据库导出失败，未生成备份包。"
+    return 1
+  fi
 
   info "正在收集 Nginx 配置..."
   mapfile -t nginx_files < <(find_nginx_files "$domain")
@@ -344,9 +444,11 @@ backup_site() {
 EOF
 
   info "正在生成压缩包：$archive"
-  tar -C "$tmp" -czf "$archive" .
+  partial="$(mktemp "$BACKUP_DIR/.sitebak.${domain}.XXXXXX")"
+  tar -C "$tmp" -czf "$partial" .
+  mv "$partial" "$archive"
   ok "备份完成：$archive"
-}
+)
 
 list_backups_for_domain() {
   local domain="${1:-}"
@@ -404,18 +506,19 @@ extract_manifest_value() {
   sed -n "s/.*\"$key\"[[:space:]]*:[[:space:]]*\"\\([^\"]*\\)\".*/\\1/p" "$file" | head -n 1
 }
 
-restore_site() {
+restore_site() (
+  umask 077
   local archive="$1"
   if [[ ! -f "$archive" ]]; then
     err "备份文件不存在：$archive"
     return 1
   fi
 
-  need_cmd tar gzip mysql awk sed find date
+  need_cmd tar gzip awk sed find date
 
   local tmp manifest domain db_name target_dir current_snapshot
   tmp="$(mktemp -d "/tmp/sitebak.restore.XXXXXX")"
-  trap 'rm -rf "$tmp"' RETURN
+  trap 'rm -rf -- "$tmp"' EXIT
 
   tar -C "$tmp" -xzf "$archive"
   manifest="$tmp/manifest.json"
@@ -432,6 +535,20 @@ restore_site() {
     err "备份包中的域名不合法：$domain"
     return 1
   fi
+
+  if [[ ! "$db_name" =~ ^[A-Za-z0-9_-]+$ ]] || [[ ! -f "$tmp/database/${db_name}.sql.gz" ]]; then
+    err "备份包数据库名称不合法或缺少 SQL 文件。"
+    return 1
+  fi
+  gzip -t "$tmp/database/${db_name}.sql.gz"
+  mkdir -p "$tmp/staged-site"
+  tar -C "$tmp/staged-site" -xzf "$tmp/files/site-files.tar.gz"
+  local wp_config
+  wp_config="$(find_wp_config "$tmp/staged-site")" || { err "备份包中无法唯一确定 WordPress 配置。"; return 1; }
+  read_db_config_file "$wp_config"
+  [[ "$DB_NAME" == "$db_name" ]] || { err "备份清单与 WordPress 数据库名称不一致。"; return 1; }
+  prepare_db_client mysql
+  run_mysql --batch --skip-column-names -e 'SELECT 1' >/dev/null
 
   header
   warn "即将恢复站点：$domain"
@@ -466,7 +583,7 @@ restore_site() {
   if [[ -f "$tmp/database/${db_name}.sql.gz" ]]; then
     info "正在导入数据库：$db_name"
     run_mysql -e "CREATE DATABASE IF NOT EXISTS \`$db_name\` DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
-    run_mysql "$db_name" < <(gzip -dc "$tmp/database/${db_name}.sql.gz")
+    gzip -dc "$tmp/database/${db_name}.sql.gz" | run_mysql "$db_name"
   else
     warn "未找到数据库导出文件，跳过数据库导入。"
   fi
@@ -486,7 +603,7 @@ restore_site() {
 
   reload_services
   ok "恢复完成：$domain"
-}
+)
 
 reload_services() {
   info "正在重载相关服务..."
@@ -650,6 +767,7 @@ $APP_NAME v$VERSION
   SITEBAK_SITE_ROOT      默认 /home/web/html
   SITEBAK_BACKUP_DIR     默认 /home
   SITEBAK_UPDATE_URL     默认 GitHub raw 地址
+  SITEBAK_DB_CONTAINER   可选，指定数据库容器名称
 EOF
 }
 

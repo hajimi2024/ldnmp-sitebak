@@ -85,6 +85,10 @@ restore-notes.txt
 
 ## 注意事项
 
+- v0.1.4：支持 LDNMP 的数据库容器，宿主机无需单独安装 `mysqldump`；兼容容器内 MySQL/MariaDB 导出与导入工具。数据库导出失败不会生成备份包，恢复前先检查客户端和数据库连接。
+- 自动匹配 `DB_HOST` 同名的 Docker 容器（LDNMP 通常为 `mysql`）。容器自定义名称与 `DB_HOST` 不一致时，可使用 `SITEBAK_DB_CONTAINER=容器名 kk`；不使用容器的站点继续使用宿主机客户端。
+- 数据库兼容性已通过模拟 Docker/数据库命令的回归测试，包含实际文件打包和恢复；尚未在真实数据库服务器上完成端到端验证。
+
 - v0.1.3：菜单操作失败后保留错误信息，输入 `0` 返回上一级；更新下载或校验失败时保留原脚本。
 
 - v0.1.1 修复 LDNMP 的 `wordpress` 子目录识别、空站点列表和标题边框对齐。
@@ -95,7 +99,7 @@ restore-notes.txt
 - 如果更换域名，当前版本不会自动执行 WordPress 数据库 `search-replace`。
 - 商业插件的文件、设置和数据库中的 license key 通常会被备份，但远程激活状态是否保持取决于插件厂商。
 
-更多说明见 [安装文档](docs/INSTALL.md)、[使用文档](docs/USAGE.md) 和 [恢复说明](docs/RESTORE.md)。
+更多说明见 [安装文档](docs/INSTALL.md)、[使用文档](docs/USAGE.md)、[恢复说明](docs/RESTORE.md) 和 [数据库兼容性](docs/DATABASE.md)。
 
 ## 开源协议
 
