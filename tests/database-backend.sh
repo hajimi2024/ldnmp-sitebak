@@ -9,7 +9,6 @@ NGINX_CONF_DIRS=()
 CERT_DIRS=()
 clear_screen() { :; }
 reload_services() { :; }
-chown() { :; }
 DB_HOST=mysql
 DB_USER=fixture_user
 DB_PASSWORD='fixture secret $ with spaces'
@@ -121,6 +120,19 @@ MOCK_CLIENT=mysql
 mkdir -p "$SITE_ROOT/example.com/wordpress" "$BACKUP_DIR"
 printf "<?php\ndefine('DB_NAME', 'fixture_db');\ndefine('DB_USER', 'fixture_user');\ndefine('DB_PASSWORD', 'fixture secret \$ with spaces');\ndefine('DB_HOST', 'mysql');\n" > "$SITE_ROOT/example.com/wordpress/wp-config.php"
 printf 'site content\n' > "$SITE_ROOT/example.com/wordpress/index.php"
+if [[ "${SITEBAK_TEST_OWNERSHIP:-0}" == 1 ]]; then
+  [[ $EUID == 0 ]] || { printf 'Ownership test requires root\n' >&2; exit 1; }
+  chmod 755 "$fixture" "$SITE_ROOT" "$SITE_ROOT/example.com"
+  mkdir -p "$SITE_ROOT/example.com/wordpress/wp-content/uploads"
+  printf 'root-owned fixture\n' > "$SITE_ROOT/example.com/root-only.txt"
+  chmod 600 "$SITE_ROOT/example.com/root-only.txt"
+  chown -R 82:82 "$SITE_ROOT/example.com/wordpress"
+  chmod 640 "$SITE_ROOT/example.com/wordpress/wp-config.php"
+  chmod 755 "$SITE_ROOT/example.com/wordpress" "$SITE_ROOT/example.com/wordpress/wp-content" "$SITE_ROOT/example.com/wordpress/wp-content/uploads"
+  ln -s index.php "$SITE_ROOT/example.com/wordpress/index-link.php"
+  chown -h 82:82 "$SITE_ROOT/example.com/wordpress/index-link.php"
+  find "$SITE_ROOT/example.com" -printf '%P %U:%G %m %y %l\n' | sort > "$fixture/expected-permissions"
+fi
 MOCK_DUMP_STATUS=2
 expect_failure backup_site example.com
 [[ -z $(find "$BACKUP_DIR" -type f -print -quit) ]]
@@ -147,12 +159,21 @@ grep -qF "$MOCK_STDERR" "$fixture/extracted/meta/database-stderr.log"
 gzip -dc "$fixture/extracted/database/fixture_db.sql.gz" | grep -q 'CREATE TABLE'
 tar -tzf "$fixture/extracted/files/site-files.tar.gz" | grep -q 'wordpress/wp-config.php'
 printf 'current content\n' > "$SITE_ROOT/example.com/wordpress/index.php"
+if [[ "${SITEBAK_TEST_OWNERSHIP:-0}" == 1 ]]; then
+  chown -R 1000:1000 "$SITE_ROOT/example.com"
+fi
 MOCK_CONNECT_STATUS=1
 expect_failure restore_site "${archives[0]}"
 [[ $(< "$SITE_ROOT/example.com/wordpress/index.php") == 'current content' ]]
 MOCK_CONNECT_STATUS=0
 restore_site "${archives[0]}" < <(printf 'yes\nn\n') > "$fixture/restore.log"
 [[ $(< "$SITE_ROOT/example.com/wordpress/index.php") == 'site content' ]]
+if [[ "${SITEBAK_TEST_OWNERSHIP:-0}" == 1 ]]; then
+  find "$SITE_ROOT/example.com" -printf '%P %U:%G %m %y %l\n' | sort > "$fixture/restored-permissions"
+  diff -u "$fixture/expected-permissions" "$fixture/restored-permissions"
+  setpriv --reuid=82 --regid=82 --clear-groups sh -c 'test -r "$1/wordpress/wp-config.php" && touch "$1/wordpress/wp-content/uploads/write-test" && ! test -r "$1/root-only.txt"' sh "$SITE_ROOT/example.com"
+  printf 'PASS: real numeric ownership, modes, symlink ownership, PHP-user config read and uploads write\n'
+fi
 grep -q 'CREATE TABLE' "$fixture/imported.sql"
 ! grep -qF "$DB_PASSWORD" "$fixture/backup.log" "$fixture/restore.log" "$fixture/args"
 unset -f docker

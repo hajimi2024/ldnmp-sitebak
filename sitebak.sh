@@ -2,7 +2,7 @@
 
 set -Eeuo pipefail
 
-VERSION="0.1.5"
+VERSION="0.1.6"
 APP_NAME="LDNMP 单站备份恢复工具"
 
 WEB_ROOT="${SITEBAK_WEB_ROOT:-/home/web}"
@@ -583,9 +583,9 @@ restore_site() (
   fi
 
   mkdir -p "$target_dir"
-  info "正在恢复站点文件..."
+  info "正在恢复站点文件及原始权限..."
   find "$target_dir" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +
-  tar -C "$target_dir" -xzf "$tmp/files/site-files.tar.gz"
+  tar --numeric-owner --same-owner --same-permissions -C "$target_dir" -xzf "$tmp/files/site-files.tar.gz"
 
   if find_wp_config "$target_dir" >/dev/null; then
     read_db_config "$domain"
@@ -610,9 +610,6 @@ restore_site() (
     info "正在恢复 SSL 证书..."
     tar -xzf "$tmp/certs/cert-items.tar.gz" -C / 2>/dev/null || warn "SSL 证书恢复不完整，请手动检查。"
   fi
-
-  info "正在修正权限..."
-  chown -R 1000:1000 "$target_dir" 2>/dev/null || true
 
   reload_services
   ok "恢复完成：$domain"
