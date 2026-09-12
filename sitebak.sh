@@ -2,7 +2,7 @@
 
 set -Eeuo pipefail
 
-VERSION="0.1.4"
+VERSION="0.1.5"
 APP_NAME="LDNMP 单站备份恢复工具"
 
 WEB_ROOT="${SITEBAK_WEB_ROOT:-/home/web}"
@@ -295,11 +295,16 @@ run_db_client() {
 }
 
 run_mysqldump() {
-  local client_version
+  local client_version client_help
   local options=(--single-transaction --quick --default-character-set=utf8mb4 --no-tablespaces)
   client_version="$(run_db_client --version)" || return 1
   if [[ "$DB_CLIENT" == mysqldump && "$client_version" != *MariaDB* ]]; then
     options+=(--set-gtid-purged=OFF)
+    client_help="$(run_db_client --help)" || return 1
+    # Single-site archives do not include server-wide masking policies.
+    if grep -Eq -- '(^|[[:space:]])--masking[-_]policies([=[:space:]\[]|$)' <<< "$client_help"; then
+      options+=(--masking_policies=OFF)
+    fi
   fi
   run_db_client "${options[@]}" "$@"
 }
@@ -411,9 +416,17 @@ backup_site() (
   tar -C "$dir" -czf "$tmp/files/site-files.tar.gz" .
 
   info "正在导出数据库：$DB_NAME"
-  if ! run_mysqldump "$DB_NAME" | gzip >"$tmp/database/${DB_NAME}.sql.gz"; then
+  if ! run_mysqldump "$DB_NAME" 2>"$tmp/meta/database-stderr.log" | gzip >"$tmp/database/${DB_NAME}.sql.gz"; then
+    cat "$tmp/meta/database-stderr.log" >&2
     err "数据库导出失败，未生成备份包。"
     return 1
+  fi
+  if [[ -s "$tmp/meta/database-stderr.log" ]]; then
+    cat "$tmp/meta/database-stderr.log" >&2
+    if grep -Eiq '(^|[^[:alnum:]_])(error|fatal)([^[:alnum:]_]|$)|couldn.t execute' "$tmp/meta/database-stderr.log"; then
+      err "数据库工具报告错误，未生成备份包。"
+      return 1
+    fi
   fi
 
   info "正在收集 Nginx 配置..."

@@ -19,6 +19,8 @@ MOCK_CLIENT=mysql
 MOCK_DUMP_STATUS=0
 MOCK_CONNECT_STATUS=0
 MOCK_VERSION=MySQL
+MOCK_MASKING_HELP=''
+MOCK_STDERR=''
 docker() {
   if [[ $1 == inspect ]]; then
     [[ ${@: -1} == mysql || ${@: -1} == custom-db ]] || return 1
@@ -42,8 +44,16 @@ docker() {
     printf '%s\n' "$MOCK_VERSION"
     return 0
   fi
+  if [[ " $* " == *' --help '* ]]; then
+    printf '%s\n' "$MOCK_MASKING_HELP"
+    return 0
+  fi
   case "$1" in
     mysqldump|mariadb-dump)
+      if [[ -n "$MOCK_MASKING_HELP" && " $* " != *' --masking_policies=OFF '* ]]; then
+        printf "mysqldump: Error: SELECT denied when trying to dump masking policies\n" >&2
+      fi
+      [[ -z "$MOCK_STDERR" ]] || printf '%s\n' "$MOCK_STDERR" >&2
       printf 'CREATE TABLE fixture_table (id int);\n'
       return "$MOCK_DUMP_STATUS"
       ;;
@@ -68,6 +78,15 @@ run_mysqldump fixture_db > "$fixture/dump.sql"
 grep -q -- '--set-gtid-purged=OFF' "$fixture/args"
 grep -q -- '--no-tablespaces' "$fixture/args"
 ! grep -qF "$DB_PASSWORD" "$fixture/args"
+! grep -q -- '--masking_policies=OFF' "$fixture/args"
+for help_option in '--masking_policies[=name]' '--masking-policies[=name]'; do
+  MOCK_MASKING_HELP="  $help_option Dump masking policies"
+  : > "$fixture/args"
+  run_mysqldump fixture_db > "$fixture/masking.sql" 2> "$fixture/masking.err"
+  [[ ! -s "$fixture/masking.err" ]]
+  grep -qx -- '--masking_policies=OFF' "$fixture/args"
+done
+MOCK_MASKING_HELP=''
 MOCK_VERSION=MariaDB
 : > "$fixture/args"
 run_mysqldump fixture_db > "$fixture/maria-alias.sql"
@@ -107,12 +126,24 @@ expect_failure backup_site example.com
 [[ -z $(find "$BACKUP_DIR" -type f -print -quit) ]]
 ! grep -q '备份完成' "$fixture/failure.log"
 MOCK_DUMP_STATUS=0
-backup_site example.com > "$fixture/backup.log"
+for message in 'mysqldump: Error: SELECT denied' 'mysqldump: [ERROR] export failed' 'mysqldump: Got error: permission denied'; do
+  MOCK_STDERR="$message"
+  expect_failure backup_site example.com
+  [[ -z $(find "$BACKUP_DIR" -type f -print -quit) ]]
+  grep -qF "$message" "$fixture/failure.log"
+  ! grep -q '备份完成' "$fixture/failure.log"
+done
+MOCK_STDERR='mysqldump: [Warning] fixture warning'
+MOCK_MASKING_HELP='  --masking_policies[=name] Dump masking policies'
+backup_site example.com > "$fixture/backup.log" 2> "$fixture/backup.err"
+grep -qF "$MOCK_STDERR" "$fixture/backup.err"
+! grep -q 'SELECT denied' "$fixture/backup.err"
 mapfile -t archives < <(list_backups_for_domain example.com)
 [[ ${#archives[@]} == 1 ]]
 [[ $(stat -c %a "${archives[0]}") == 600 ]]
 mkdir "$fixture/extracted"
 tar -xzf "${archives[0]}" -C "$fixture/extracted"
+grep -qF "$MOCK_STDERR" "$fixture/extracted/meta/database-stderr.log"
 gzip -dc "$fixture/extracted/database/fixture_db.sql.gz" | grep -q 'CREATE TABLE'
 tar -tzf "$fixture/extracted/files/site-files.tar.gz" | grep -q 'wordpress/wp-config.php'
 printf 'current content\n' > "$SITE_ROOT/example.com/wordpress/index.php"
