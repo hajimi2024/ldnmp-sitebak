@@ -2,7 +2,7 @@
 
 set -Eeuo pipefail
 
-VERSION="0.1.6"
+VERSION="0.2.0"
 APP_NAME="LDNMP 单站备份恢复工具"
 
 WEB_ROOT="${SITEBAK_WEB_ROOT:-/home/web}"
@@ -353,11 +353,14 @@ write_manifest() {
   local db_name="$5"
   local nginx_count="$6"
   local cert_count="$7"
+  local archive_type="${8:-backup}" snapshot_reason="${9:-manual}"
 
   cat >"$file" <<EOF
 {
   "tool": "sitebak",
   "version": "$(json_escape "$VERSION")",
+  "archive_type": "$archive_type",
+  "snapshot_reason": "$snapshot_reason",
   "created_at": "$(json_escape "$created_at")",
   "domain": "$(json_escape "$domain")",
   "site_dir": "$(json_escape "$site_dir")",
@@ -374,6 +377,12 @@ EOF
 backup_site() (
   umask 077
   local domain="$1"
+  local archive_type="${2:-backup}" snapshot_reason="${3:-manual}" label='备份'
+  case "$archive_type" in
+    backup) ;;
+    snapshot) label='完整快照' ;;
+    *) err "不支持的备份类型。"; return 1 ;;
+  esac
   domain="$(sanitize_domain "$domain")"
 
   if ! valid_domain "$domain"; then
@@ -406,6 +415,7 @@ backup_site() (
   timestamp="$(date +"%Y%m%d_%H%M%S")"
   created_at="$(date -Iseconds)"
   archive="$BACKUP_DIR/${domain}_${timestamp}.tar.gz"
+  [[ "$archive_type" != snapshot ]] || archive="$BACKUP_DIR/${domain}_snapshot_${timestamp}.tar.gz"
   [[ ! -e "$archive" ]] || { err "同名备份已存在，请稍后重试。"; return 1; }
   tmp="$(mktemp -d "/tmp/sitebak.${domain}.XXXXXX")"
 
@@ -432,20 +442,28 @@ backup_site() (
   info "正在收集 Nginx 配置..."
   mapfile -t nginx_files < <(find_nginx_files "$domain")
   nginx_count="${#nginx_files[@]}"
+  if [[ "$archive_type" == snapshot ]] && ((nginx_count == 0)); then
+    err "未找到站点 Nginx 配置，无法创建完整快照。"
+    return 1
+  fi
   if ((nginx_count > 0)); then
     printf "%s\n" "${nginx_files[@]}" >"$tmp/meta/nginx-files.txt"
-    tar -czf "$tmp/nginx/nginx-files.tar.gz" -T "$tmp/meta/nginx-files.txt" 2>/dev/null || true
+    tar -czf "$tmp/nginx/nginx-files.tar.gz" -T "$tmp/meta/nginx-files.txt"
   fi
 
   info "正在收集 SSL 证书..."
   mapfile -t cert_items < <(find_cert_dirs "$domain")
   cert_count="${#cert_items[@]}"
+  if [[ "$archive_type" == snapshot ]] && ((cert_count == 0)) && grep -Eq '^[[:space:]]*ssl_certificate(_key)?[[:space:]]' "${nginx_files[@]}"; then
+    err "站点配置了 HTTPS，但未找到证书，无法创建完整快照。"
+    return 1
+  fi
   if ((cert_count > 0)); then
     printf "%s\n" "${cert_items[@]}" >"$tmp/meta/cert-items.txt"
-    tar -czf "$tmp/certs/cert-items.tar.gz" -T "$tmp/meta/cert-items.txt" 2>/dev/null || true
+    tar -czf "$tmp/certs/cert-items.tar.gz" -T "$tmp/meta/cert-items.txt"
   fi
 
-  write_manifest "$tmp/manifest.json" "$domain" "$created_at" "$dir" "$DB_NAME" "$nginx_count" "$cert_count"
+  write_manifest "$tmp/manifest.json" "$domain" "$created_at" "$dir" "$DB_NAME" "$nginx_count" "$cert_count" "$archive_type" "$snapshot_reason"
   cat >"$tmp/restore-notes.txt" <<EOF
 此备份由 sitebak 生成。
 
@@ -459,23 +477,52 @@ EOF
   info "正在生成压缩包：$archive"
   partial="$(mktemp "$BACKUP_DIR/.sitebak.${domain}.XXXXXX")"
   tar -C "$tmp" -czf "$partial" .
-  mv "$partial" "$archive"
-  ok "备份完成：$archive"
+  ln "$partial" "$archive"
+  ok "${label}完成：$archive"
 )
 
-list_backups_for_domain() {
-  local domain="${1:-}"
-  if [[ -n "$domain" ]]; then
-    find "$BACKUP_DIR" -maxdepth 1 -type f -name "${domain}_[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]_[0-9][0-9][0-9][0-9][0-9][0-9].tar.gz" -printf "%T@ %p\n" 2>/dev/null | sort -rn | cut -d' ' -f2-
+archive_kind() {
+  local name="${1##*/}" domain
+  if [[ "$name" =~ ^(.+)_snapshot_[0-9]{8}_[0-9]{6}\.tar\.gz$ ]]; then
+    domain="${BASH_REMATCH[1]}"; valid_domain "$domain" || return 1
+    printf 'snapshot'
+  elif [[ "$name" =~ ^(.+)_before_restore_[0-9]{8}_[0-9]{6}\.tar\.gz$ ]]; then
+    domain="${BASH_REMATCH[1]}"; valid_domain "$domain" || return 1
+    printf 'legacy'
+  elif [[ "$name" =~ ^(.+)_[0-9]{8}_[0-9]{6}\.tar\.gz$ ]]; then
+    domain="${BASH_REMATCH[1]}"; valid_domain "$domain" || return 1
+    printf 'backup'
   else
-    find "$BACKUP_DIR" -maxdepth 1 -type f -name "*_[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]_[0-9][0-9][0-9][0-9][0-9][0-9].tar.gz" -printf "%T@ %p\n" 2>/dev/null | sort -rn | cut -d' ' -f2-
+    return 1
   fi
+}
+
+archive_label() {
+  case "$(archive_kind "$1")" in
+    snapshot) printf '完整快照' ;;
+    legacy) printf '旧版文件快照（不可完整恢复）' ;;
+    *) printf '普通备份' ;;
+  esac
+}
+
+list_backups_for_domain() {
+  local domain="${1:-}" filter="${2:-backup}" file kind name
+  [[ -d "$BACKUP_DIR" ]] || return 0
+  while IFS= read -r file; do
+    kind="$(archive_kind "$file")" || continue
+    name="${file##*/}"
+    [[ -z "$domain" || "$name" == "${domain}_"* ]] || continue
+    case "$filter:$kind" in
+      all:*|backup:backup|snapshot:snapshot|snapshots:snapshot|snapshots:legacy) printf '%s\n' "$file" ;;
+    esac
+  done < <(find "$BACKUP_DIR" -maxdepth 1 -type f -name '*.tar.gz' -printf '%T@ %p\n' | sort -rn | cut -d' ' -f2-)
 }
 
 select_backup() {
   local domain="${1:-}"
+  local filter="${2:-backup}" action="${3:-恢复}" choice number
   local backups=()
-  mapfile -t backups < <(list_backups_for_domain "$domain")
+  mapfile -t backups < <(list_backups_for_domain "$domain" "$filter")
 
   while true; do
     header >&2
@@ -486,7 +533,7 @@ select_backup() {
     fi
 
     if ((${#backups[@]} == 0)); then
-      warn "未找到备份文件。"
+      warn "未找到符合条件的文件。" >&2
       printf "\n0. 返回上一级\n请选择：" >&2
       read -r choice || return 1
       [[ "$choice" == "0" ]] && return 1
@@ -498,18 +545,20 @@ select_backup() {
       file="${backups[$i]}"
       size="$(du -h "$file" | awk '{print $1}')"
       mtime="$(date -r "$file" +"%Y-%m-%d %H:%M:%S")"
-      printf "%d. %s    %s    %s\n" "$((i + 1))" "$(basename "$file")" "$size" "$mtime" >&2
+      printf "%d. [%s] %s    %s    %s\n" "$((i + 1))" "$(archive_label "$file")" "$(basename "$file")" "$size" "$mtime" >&2
     done
-    printf "0. 返回上一级\n\n请选择要恢复的版本：" >&2
+    printf "0. 返回上一级\n\n请选择要%s的文件：" "$action" >&2
     read -r choice || return 1
 
     [[ "$choice" == "0" ]] && return 1
-    if [[ "$choice" =~ ^[0-9]+$ ]] && ((choice >= 1 && choice <= ${#backups[@]})); then
-      printf "%s" "${backups[$((choice - 1))]}"
-      return 0
+    if [[ "$choice" =~ ^[0-9]{1,9}$ ]]; then
+      number=$((10#$choice))
+      if ((number >= 1 && number <= ${#backups[@]})); then
+        printf "%s" "${backups[$((number - 1))]}"
+        return 0
+      fi
     fi
-    warn "无效的选择，请输入正确编号。"
-    pause >&2
+    warn "无效的选择，请输入正确编号或 0 返回。" >&2
   done
 }
 
@@ -522,6 +571,11 @@ extract_manifest_value() {
 restore_site() (
   umask 077
   local archive="$1"
+  local expected_type="${2:-}"
+  if [[ "$(archive_kind "$archive" || true)" == legacy ]]; then
+    err "这是旧版文件快照，不含数据库，不能用于完整站点恢复。"
+    return 1
+  fi
   if [[ ! -f "$archive" ]]; then
     err "备份文件不存在：$archive"
     return 1
@@ -529,7 +583,7 @@ restore_site() (
 
   need_cmd tar gzip awk sed find date
 
-  local tmp manifest domain db_name target_dir current_snapshot
+  local tmp manifest domain db_name target_dir component count snapshot_choice payload
   tmp="$(mktemp -d "/tmp/sitebak.restore.XXXXXX")"
   trap 'rm -rf -- "$tmp"' EXIT
 
@@ -539,6 +593,20 @@ restore_site() (
     err "备份包缺少 manifest.json，无法安全恢复。"
     return 1
   fi
+  if [[ "$expected_type" == snapshot && "$(extract_manifest_value "$manifest" archive_type)" != snapshot ]]; then
+    err "所选文件不是新版完整快照。"
+    return 1
+  fi
+  for component in nginx certs; do
+    case "$component" in
+      nginx) count="$(sed -n 's/.*"nginx_files": *\([0-9][0-9]*\).*/\1/p' "$manifest")"; payload="$tmp/nginx/nginx-files.tar.gz" ;;
+      certs) count="$(sed -n 's/.*"cert_items": *\([0-9][0-9]*\).*/\1/p' "$manifest")"; payload="$tmp/certs/cert-items.tar.gz" ;;
+    esac
+    if [[ "$count" =~ ^[0-9]+$ ]] && ((count > 0)); then
+      [[ -f "$payload" ]] || { err "备份缺少 $component 文件，已停止恢复。"; return 1; }
+    fi
+    [[ ! -f "$payload" ]] || tar -tzf "$payload" >/dev/null
+  done
 
   domain="$(extract_manifest_value "$manifest" "domain")"
   db_name="$(extract_manifest_value "$manifest" "db_name")"
@@ -572,14 +640,19 @@ restore_site() (
   [[ "$confirm" == "yes" ]] || { warn "已取消恢复。"; return 1; }
 
   if [[ -d "$target_dir" ]]; then
-    printf "恢复前是否自动创建当前站点快照？[Y/n] "
-    read -r snapshot_choice || true
-    snapshot_choice="${snapshot_choice:-Y}"
-    if [[ "$snapshot_choice" =~ ^[Yy]$ ]]; then
-      current_snapshot="$BACKUP_DIR/${domain}_before_restore_$(date +"%Y%m%d_%H%M%S").tar.gz"
-      info "正在创建当前站点快照：$current_snapshot"
-      tar -C "$target_dir" -czf "$current_snapshot" .
-    fi
+    while true; do
+      printf "恢复前是否创建完整快照（包含数据库）？[Y/n，0 返回] "
+      read -r snapshot_choice || return 1
+      case "$snapshot_choice" in
+        ''|Y|y)
+          info "正在保存当前站点完整快照，失败将停止恢复。"
+          backup_site "$domain" snapshot before_restore
+          break ;;
+        N|n) break ;;
+        0) warn "已取消恢复。"; return 0 ;;
+        *) warn "请输入 Y、n 或 0。" ;;
+      esac
+    done
   fi
 
   mkdir -p "$target_dir"
@@ -603,12 +676,12 @@ restore_site() (
 
   if [[ -f "$tmp/nginx/nginx-files.tar.gz" ]]; then
     info "正在恢复 Nginx 配置..."
-    tar -xzf "$tmp/nginx/nginx-files.tar.gz" -C / 2>/dev/null || warn "Nginx 配置恢复不完整，请手动检查。"
+    tar -xzf "$tmp/nginx/nginx-files.tar.gz" -C /
   fi
 
   if [[ -f "$tmp/certs/cert-items.tar.gz" ]]; then
     info "正在恢复 SSL 证书..."
-    tar -xzf "$tmp/certs/cert-items.tar.gz" -C / 2>/dev/null || warn "SSL 证书恢复不完整，请手动检查。"
+    tar -xzf "$tmp/certs/cert-items.tar.gz" -C /
   fi
 
   reload_services
@@ -640,20 +713,20 @@ show_sites() {
 show_backups() {
   header
   local backups=()
-  mapfile -t backups < <(list_backups_for_domain "")
+  mapfile -t backups < <(list_backups_for_domain "" "${1:-all}")
   if ((${#backups[@]} == 0)); then
     warn "未找到备份文件。"
   else
     local file
     for file in "${backups[@]}"; do
-      printf "%-48s %8s %s\n" "$(basename "$file")" "$(du -h "$file" | awk '{print $1}')" "$(date -r "$file" +"%Y-%m-%d %H:%M:%S")"
+      printf "[%s] %s    %s    %s\n" "$(archive_label "$file")" "$(basename "$file")" "$(du -h "$file" | awk '{print $1}')" "$(date -r "$file" +"%Y-%m-%d %H:%M:%S")"
     done
   fi
 }
 
 delete_backup_menu() {
   local file
-  file="$(select_backup "")" || return 0
+  file="$(select_backup "" "${1:-all}" 删除)" || return 0
   header
   warn "即将删除备份：$file"
   printf "请输入 yes 确认删除："
@@ -724,10 +797,39 @@ backup_menu() {
 }
 
 restore_menu() {
-  local domain archive
-  domain="$(select_domain "请选择要恢复的站点")" || return 0
-  archive="$(select_backup "$domain")" || return 0
+  local archive
+  archive="$(select_backup "" backup)" || return 0
   restore_site "$archive"
+}
+
+create_snapshot_menu() {
+  local domain
+  domain="$(select_domain "请选择要创建完整快照的站点")" || return 0
+  header
+  backup_site "$domain" snapshot
+}
+
+restore_snapshot_menu() {
+  local archive
+  archive="$(select_backup "" snapshot)" || return 0
+  restore_site "$archive" snapshot
+}
+
+snapshots_menu() {
+  local choice
+  while true; do
+    header
+    printf '快照管理\n\n1. 创建完整快照\n2. 查看快照\n3. 恢复完整快照\n4. 删除快照\n0. 返回上一级\n\n请输入你的选择：'
+    read -r choice || return 0
+    case "$choice" in
+      1) run_menu_action create_snapshot_menu ;;
+      2) run_menu_action show_backups snapshots ;;
+      3) run_menu_action restore_snapshot_menu ;;
+      4) run_menu_action delete_backup_menu snapshots ;;
+      0) return 0 ;;
+      *) warn "无效的选择，请输入 0 至 4。" ;;
+    esac
+  done
 }
 
 main_menu() {
@@ -741,6 +843,7 @@ main_menu() {
 4. 查看备份文件
 5. 删除旧备份
 6. 更新脚本
+7. 快照管理
 0. 退出
 
 EOF
@@ -753,6 +856,7 @@ EOF
       4) run_menu_action show_backups ;;
       5) run_menu_action delete_backup_menu ;;
       6) run_menu_action update_self ;;
+      7) snapshots_menu ;;
       0) exit 0 ;;
       *) warn "无效的选择，请重试。"; sleep 1 ;;
     esac
@@ -770,6 +874,9 @@ $APP_NAME v$VERSION
   kk restore example.com
   kk restore /home/example.com_20260912_153000.tar.gz
   kk list-backups [example.com]
+  kk snapshot example.com
+  kk list-snapshots [example.com]
+  kk restore-snapshot example.com
   kk update
 
 环境变量：
@@ -808,6 +915,26 @@ main() {
       ;;
     list-backups)
       list_backups_for_domain "${2:-}"
+      ;;
+    snapshot)
+      need_root
+      [[ -n "${2:-}" ]] || { err "请提供域名。"; exit 1; }
+      backup_site "$2" snapshot
+      ;;
+    list-snapshots)
+      list_backups_for_domain "${2:-}" snapshots
+      ;;
+    restore-snapshot)
+      need_root
+      [[ -n "${2:-}" ]] || { err "请提供域名或快照文件路径。"; exit 1; }
+      if [[ -f "$2" ]]; then
+        archive="$2"
+      else
+        domain="$(sanitize_domain "$2")"
+        valid_domain "$domain" || { err "域名格式不正确：$2"; exit 1; }
+        archive="$(select_backup "$domain" snapshot)" || exit 1
+      fi
+      restore_site "$archive" snapshot
       ;;
     update)
       need_root
