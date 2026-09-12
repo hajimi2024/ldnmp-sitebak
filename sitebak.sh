@@ -2,7 +2,7 @@
 
 set -Eeuo pipefail
 
-VERSION="0.1.2"
+VERSION="0.1.3"
 APP_NAME="LDNMP 单站备份恢复工具"
 
 WEB_ROOT="${SITEBAK_WEB_ROOT:-/home/web}"
@@ -508,7 +508,6 @@ show_sites() {
     printf "当前 WordPress 站点：\n\n"
     printf "%s\n" "${sites[@]}" | nl -w1 -s'. '
   fi
-  pause
 }
 
 show_backups() {
@@ -523,7 +522,6 @@ show_backups() {
       printf "%-48s %8s %s\n" "$(basename "$file")" "$(du -h "$file" | awk '{print $1}')" "$(date -r "$file" +"%Y-%m-%d %H:%M:%S")"
     done
   fi
-  pause
 }
 
 delete_backup_menu() {
@@ -539,7 +537,29 @@ delete_backup_menu() {
   else
     warn "已取消删除。"
   fi
-  pause
+}
+
+return_to_menu() {
+  local choice
+  while true; do
+    printf '\n0. 返回上一级\n请输入：'
+    read -r choice || return 0
+    [[ "$choice" == "0" ]] && return 0
+    warn "请输入 0 返回上一级。"
+  done
+}
+
+run_menu_action() {
+  local status
+  # Keep errexit inside the task; conditional calls would disable it in Bash.
+  set +e
+  ( set -Eeuo pipefail; "$@" )
+  status=$?
+  set -e
+  if ((status != 0)); then
+    err "操作未完成（退出码：$status），请查看上方错误信息。"
+  fi
+  return_to_menu
 }
 
 update_self() {
@@ -547,9 +567,23 @@ update_self() {
   info "正在从 GitHub 更新脚本..."
   local tmp
   tmp="$(mktemp)"
-  curl -fsSL "$UPDATE_URL" -o "$tmp"
-  bash -n "$tmp"
-  install -m 0755 "$tmp" "$INSTALL_PATH"
+  if ! curl -fsSL --connect-timeout 15 --max-time 120 "$UPDATE_URL" -o "$tmp"; then
+    rm -f "$tmp"
+    err "下载失败，当前脚本未更新。请检查网络后重试。"
+    return 1
+  fi
+  if [[ ! -s "$tmp" ]] || ! bash -n "$tmp"; then
+    rm -f "$tmp"
+    err "下载的脚本为空或语法检查失败，当前脚本未更新。"
+    return 1
+  fi
+  local staged
+  staged="$(mktemp "${INSTALL_PATH}.XXXXXX")" || { rm -f "$tmp"; return 1; }
+  if ! install -m 0755 "$tmp" "$staged" || ! mv -f "$staged" "$INSTALL_PATH"; then
+    rm -f "$tmp" "$staged"
+    err "安装更新失败。"
+    return 1
+  fi
   rm -f "$tmp"
   ok "更新完成：$INSTALL_PATH"
   info "请退出当前菜单，输入 kk 打开新版菜单。"
@@ -560,7 +594,6 @@ backup_menu() {
   domain="$(select_domain "请选择要备份的站点")" || return 0
   header
   backup_site "$domain"
-  pause
 }
 
 restore_menu() {
@@ -568,7 +601,6 @@ restore_menu() {
   domain="$(select_domain "请选择要恢复的站点")" || return 0
   archive="$(select_backup "$domain")" || return 0
   restore_site "$archive"
-  pause
 }
 
 main_menu() {
@@ -588,12 +620,12 @@ EOF
     printf "请输入你的选择："
     read -r choice || exit 0
     case "$choice" in
-      1) show_sites ;;
-      2) backup_menu ;;
-      3) restore_menu ;;
-      4) show_backups ;;
-      5) delete_backup_menu ;;
-      6) update_self; pause ;;
+      1) run_menu_action show_sites ;;
+      2) run_menu_action backup_menu ;;
+      3) run_menu_action restore_menu ;;
+      4) run_menu_action show_backups ;;
+      5) run_menu_action delete_backup_menu ;;
+      6) run_menu_action update_self ;;
       0) exit 0 ;;
       *) warn "无效的选择，请重试。"; sleep 1 ;;
     esac
