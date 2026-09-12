@@ -7,7 +7,7 @@
 脚本应支持“首次从 GitHub 安装到 VPS，本地快捷指令日常调用”的使用方式：
 
 ```bash
-sitebak
+kk
 ```
 
 ## 核心能力
@@ -95,3 +95,4 @@ example.com_20260912_153000.tar.gz
 - `docs/RESTORE.md`
 - `LICENSE`
 - `.gitignore`
+

@@ -15,7 +15,7 @@
 执行：
 
 ```bash
-sitebak restore example.com
+kk restore example.com
 ```
 
 脚本会列出该域名的备份版本：
@@ -44,3 +44,4 @@ sitebak restore example.com
 - 当前版本主要面向同域名恢复。
 - 如果更换域名，WordPress 数据库中的链接、序列化数据、插件配置需要额外处理。
 - 商业插件的远程授权状态不保证恢复，具体取决于插件厂商。
+

@@ -5,7 +5,7 @@
 运行：
 
 ```bash
-sitebak
+kk
 ```
 
 菜单：
@@ -27,32 +27,32 @@ sitebak
 列出站点：
 
 ```bash
-sitebak list
+kk list
 ```
 
 备份站点：
 
 ```bash
-sitebak backup example.com
+kk backup example.com
 ```
 
 列出备份：
 
 ```bash
-sitebak list-backups
-sitebak list-backups example.com
+kk list-backups
+kk list-backups example.com
 ```
 
 恢复站点：
 
 ```bash
-sitebak restore example.com
+kk restore example.com
 ```
 
 恢复指定压缩包：
 
 ```bash
-sitebak restore /home/example.com_20260912_153000.tar.gz
+kk restore /home/example.com_20260912_153000.tar.gz
 ```
 
 ## 备份文件名
@@ -68,3 +68,4 @@ example.com_20260912_153000.tar.gz
 ```text
 域名_年月日_时分秒.tar.gz
 ```
+

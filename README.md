@@ -6,7 +6,7 @@
 
 ## 功能
 
-- 纯交互菜单，输入 `sitebak` 即可使用。
+- 纯交互菜单，输入 `kk` 即可使用。
 - 单独备份某个 WordPress 站点。
 - 同一站点多个备份版本可按编号选择恢复。
 - 备份包自带时间戳，例如 `example.com_20260912_153000.tar.gz`。
@@ -17,7 +17,7 @@
 ## 安装
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/hajimi2024/ldnmp-sitebak/main/sitebak.sh -o /usr/local/bin/sitebak && chmod +x /usr/local/bin/sitebak
+curl -fsSL https://raw.githubusercontent.com/hajimi2024/ldnmp-sitebak/main/sitebak.sh -o /usr/local/bin/kk && chmod +x /usr/local/bin/kk
 ```
 
 ## 使用
@@ -25,31 +25,31 @@ curl -fsSL https://raw.githubusercontent.com/hajimi2024/ldnmp-sitebak/main/siteb
 进入交互菜单：
 
 ```bash
-sitebak
+kk
 ```
 
 快捷备份：
 
 ```bash
-sitebak backup example.com
+kk backup example.com
 ```
 
 恢复指定站点，并从备份列表中选择版本：
 
 ```bash
-sitebak restore example.com
+kk restore example.com
 ```
 
 直接恢复指定备份包：
 
 ```bash
-sitebak restore /home/example.com_20260912_153000.tar.gz
+kk restore /home/example.com_20260912_153000.tar.gz
 ```
 
 更新脚本：
 
 ```bash
-sitebak update
+kk update
 ```
 
 ## 默认路径
@@ -68,7 +68,7 @@ SSL 证书：/home/web/certs
 如需覆盖默认路径，可以使用环境变量：
 
 ```bash
-SITEBAK_BACKUP_DIR=/root/backups sitebak backup example.com
+SITEBAK_BACKUP_DIR=/root/backups kk backup example.com
 ```
 
 ## 备份包内容

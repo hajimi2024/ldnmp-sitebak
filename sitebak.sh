@@ -2,13 +2,13 @@
 
 set -Eeuo pipefail
 
-VERSION="0.1.1"
+VERSION="0.1.2"
 APP_NAME="LDNMP 单站备份恢复工具"
 
 WEB_ROOT="${SITEBAK_WEB_ROOT:-/home/web}"
 SITE_ROOT="${SITEBAK_SITE_ROOT:-$WEB_ROOT/html}"
 BACKUP_DIR="${SITEBAK_BACKUP_DIR:-/home}"
-INSTALL_PATH="${SITEBAK_INSTALL_PATH:-/usr/local/bin/sitebak}"
+INSTALL_PATH="${SITEBAK_INSTALL_PATH:-/usr/local/bin/kk}"
 UPDATE_URL="${SITEBAK_UPDATE_URL:-https://raw.githubusercontent.com/hajimi2024/ldnmp-sitebak/main/sitebak.sh}"
 
 NGINX_CONF_DIRS=(
@@ -548,9 +548,11 @@ update_self() {
   local tmp
   tmp="$(mktemp)"
   curl -fsSL "$UPDATE_URL" -o "$tmp"
+  bash -n "$tmp"
   install -m 0755 "$tmp" "$INSTALL_PATH"
   rm -f "$tmp"
   ok "更新完成：$INSTALL_PATH"
+  info "请退出当前菜单，输入 kk 打开新版菜单。"
 }
 
 backup_menu() {
@@ -603,13 +605,13 @@ usage() {
 $APP_NAME v$VERSION
 
 用法：
-  sitebak
-  sitebak list
-  sitebak backup example.com
-  sitebak restore example.com
-  sitebak restore /home/example.com_20260912_153000.tar.gz
-  sitebak list-backups [example.com]
-  sitebak update
+  kk
+  kk list
+  kk backup example.com
+  kk restore example.com
+  kk restore /home/example.com_20260912_153000.tar.gz
+  kk list-backups [example.com]
+  kk update
 
 环境变量：
   SITEBAK_WEB_ROOT       默认 /home/web
