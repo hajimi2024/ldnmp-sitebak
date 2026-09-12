@@ -17,8 +17,10 @@
 ## 安装
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/hajimi2024/ldnmp-sitebak/main/sitebak.sh -o /usr/local/bin/kk && chmod +x /usr/local/bin/kk
+(set -o pipefail; curl -fsSL --connect-timeout 15 --max-time 120 https://raw.githubusercontent.com/hajimi2024/ldnmp-sitebak/main/install.sh | bash) && echo "安装成功，输入 kk 进入菜单。" || (echo "安装失败，请查看上方报错。" >&2; exit 1)
 ```
+
+在 Linux VPS 的 root 终端执行。安装结束会明确显示成功或失败；下载或校验失败时保留已安装的脚本。
 
 ## 使用
 
