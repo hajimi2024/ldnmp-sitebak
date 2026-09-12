@@ -2,7 +2,7 @@
 
 set -Eeuo pipefail
 
-VERSION="0.1.0"
+VERSION="0.1.1"
 APP_NAME="LDNMP 单站备份恢复工具"
 
 WEB_ROOT="${SITEBAK_WEB_ROOT:-/home/web}"
@@ -65,9 +65,16 @@ need_cmd() {
 
 header() {
   clear_screen
-  printf "${BOLD}╔════════════════════════════════════════════╗${RESET}\n"
-  printf "${BOLD}║        %s        ║${RESET}\n" "$APP_NAME"
-  printf "${BOLD}╚════════════════════════════════════════════╝${RESET}\n"
+  local width=44 padding border
+  if [[ "${COLUMNS:-80}" =~ ^[0-9]+$ ]] && (( ${COLUMNS:-80} < 46 )); then
+    width=22
+  fi
+  padding=$(((width - 22) / 2))
+  printf -v border '%*s' "$width" ''
+  border="${border// /-}"
+  printf "${BOLD}+%s+${RESET}\n" "$border"
+  printf "${BOLD}|%*s%s%*s|${RESET}\n" "$padding" '' "$APP_NAME" "$padding" ''
+  printf "${BOLD}+%s+${RESET}\n" "$border"
   printf "版本：%s\n" "$VERSION"
   printf "站点目录：%s\n" "$SITE_ROOT"
   printf "备份目录：%s\n\n" "$BACKUP_DIR"
@@ -90,16 +97,31 @@ domain_to_db_name() {
   printf "%s" "$1" | sed 's/[^A-Za-z0-9]/_/g'
 }
 
+find_wp_config() {
+  local dir="$1"
+  local configs=() file
+  # LDNMP installs WordPress below the domain directory.
+  for file in "$dir/wp-config.php" "$dir/wordpress/wp-config.php"; do
+    [[ ! -f "$file" ]] || configs+=("$file")
+  done
+  ((${#configs[@]} == 1)) || return 1
+  printf '%s\n' "${configs[0]}"
+}
+
 list_sites_array() {
   local sites=()
   if [[ -d "$SITE_ROOT" ]]; then
     while IFS= read -r -d '' dir; do
       local name
       name="$(basename "$dir")"
-      [[ -f "$dir/wp-config.php" ]] && sites+=("$name")
+      if find_wp_config "$dir" >/dev/null; then
+        sites+=("$name")
+      fi
     done < <(find "$SITE_ROOT" -mindepth 1 -maxdepth 1 -type d -print0 2>/dev/null | sort -z)
   fi
-  printf "%s\n" "${sites[@]}"
+  if ((${#sites[@]} > 0)); then
+    printf "%s\n" "${sites[@]}"
+  fi
 }
 
 select_domain() {
@@ -111,7 +133,7 @@ select_domain() {
     header >&2
     printf "%s：\n\n" "$title" >&2
     if ((${#sites[@]} == 0)); then
-      warn "未在 $SITE_ROOT 下找到 WordPress 站点。"
+      warn "未在 $SITE_ROOT 下找到 WordPress 站点。检查域名目录或其 wordpress 子目录中的 wp-config.php；同时存在两份配置时不自动选择。" >&2
       printf "\n0. 返回上一级\n" >&2
     else
       local i
@@ -132,7 +154,7 @@ select_domain() {
         printf "%s" "${sites[$((choice - 1))]}"
         return 0
       fi
-      warn "无效的编号，请重新选择。"
+      warn "无效的编号，请重新选择。" >&2
       pause >&2
       continue
     fi
@@ -144,7 +166,7 @@ select_domain() {
       return 0
     fi
 
-    warn "域名格式不正确。"
+    warn "域名格式不正确。" >&2
     printf "1. 重新输入\n0. 返回上一级\n请选择：" >&2
     read -r retry || return 1
     [[ "$retry" == "0" ]] && return 1
@@ -162,8 +184,8 @@ parse_wp_define() {
     $0 ~ "define[[:space:]]*\\([[:space:]]*[\"\047]" key "[\"\047]" {
       line=$0
       sub(/^[^,]*,[[:space:]]*/, "", line)
-      sub(/[[:space:]]*\\).*/, "", line)
-      gsub(/^[[:space:]]*[\"\047]|[\"\047][[:space:]]*$/, "", line)
+      sub(/["\047][[:space:]]*\)[[:space:]]*;.*/, "", line)
+      sub(/^[[:space:]]*["\047]/, "", line)
       print line
       exit
     }
@@ -173,7 +195,10 @@ parse_wp_define() {
 read_db_config() {
   local domain="$1"
   local wp_config
-  wp_config="$(site_path "$domain")/wp-config.php"
+  wp_config="$(find_wp_config "$(site_path "$domain")")" || {
+    err "无法唯一确定 WordPress 配置：$(site_path "$domain")"
+    return 1
+  }
 
   DB_NAME="$(parse_wp_define "$wp_config" "DB_NAME")"
   DB_USER="$(parse_wp_define "$wp_config" "DB_USER")"
@@ -182,6 +207,7 @@ read_db_config() {
 
   [[ -z "${DB_NAME:-}" ]] && DB_NAME="$(domain_to_db_name "$domain")"
   [[ -z "${DB_HOST:-}" ]] && DB_HOST="localhost"
+  return 0
 }
 
 run_mysqldump() {
@@ -199,7 +225,7 @@ find_nginx_files() {
   for dir in "${NGINX_CONF_DIRS[@]}"; do
     [[ -d "$dir" ]] || continue
     while IFS= read -r -d '' file; do
-      if grep -qE "(^|[[:space:]])${domain//./\.}([[:space:];]|$)" "$file" 2>/dev/null; then
+      if grep -qE "(^|[[:space:]])${domain//./\\.}([[:space:];]|$)" "$file" 2>/dev/null; then
         results+=("$file")
       fi
     done < <(find "$dir" -maxdepth 2 -type f \( -name "*.conf" -o -name "*$domain*" \) -print0 2>/dev/null)
@@ -261,7 +287,7 @@ backup_site() {
 
   local dir
   dir="$(site_path "$domain")"
-  if [[ ! -d "$dir" || ! -f "$dir/wp-config.php" ]]; then
+  if [[ ! -d "$dir" ]] || ! find_wp_config "$dir" >/dev/null; then
     err "未找到 WordPress 站点：$dir"
     return 1
   fi
@@ -375,7 +401,7 @@ select_backup() {
 extract_manifest_value() {
   local file="$1"
   local key="$2"
-  sed -n "s/.*\"$key\"[[:space:]]*:[[:space:]]*\"\([^\"]*\)\".*/\1/p" "$file" | head -n 1
+  sed -n "s/.*\"$key\"[[:space:]]*:[[:space:]]*\"\\([^\"]*\\)\".*/\\1/p" "$file" | head -n 1
 }
 
 restore_site() {
@@ -431,7 +457,7 @@ restore_site() {
   find "$target_dir" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +
   tar -C "$target_dir" -xzf "$tmp/files/site-files.tar.gz"
 
-  if [[ -f "$target_dir/wp-config.php" ]]; then
+  if find_wp_config "$target_dir" >/dev/null; then
     read_db_config "$domain"
   else
     DB_NAME="$db_name"
@@ -475,7 +501,9 @@ show_sites() {
   local sites=()
   mapfile -t sites < <(list_sites_array)
   if ((${#sites[@]} == 0)); then
-    warn "未找到 WordPress 站点。"
+    warn "未在 $SITE_ROOT 下找到 WordPress 站点。"
+    printf "检查路径：域名/wp-config.php 或 域名/wordpress/wp-config.php\n"
+    printf "同时存在两份配置的目录不会自动选择。\n"
   else
     printf "当前 WordPress 站点：\n\n"
     printf "%s\n" "${sites[@]}" | nl -w1 -s'. '
@@ -634,4 +662,6 @@ main() {
   esac
 }
 
-main "$@"
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  main "$@"
+fi

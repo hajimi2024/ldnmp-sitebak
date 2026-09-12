@@ -54,6 +54,10 @@ sitebak update
 
 ## 默认路径
 
+站点识别支持 `/home/web/html/域名/wp-config.php` 和 LDNMP 常用的
+`/home/web/html/域名/wordpress/wp-config.php`。备份仍打包整个域名目录，保留原目录结构。
+若同一域名两处都存在配置，脚本不会自动选择，以免选错数据库。
+
 ```bash
 站点目录：/home/web/html
 备份目录：/home
@@ -80,6 +84,9 @@ restore-notes.txt
 ```
 
 ## 注意事项
+
+- v0.1.1 修复 LDNMP 的 `wordpress` 子目录识别、空站点列表和标题边框对齐。
+- 本地回归测试覆盖站点识别、数据库配置读取、菜单输出及边框宽度；尚未完成真实 VPS 的备份恢复验证。
 
 - 推荐在同样的 LDNMP 环境中恢复。
 - 同域名恢复通常不需要额外修改 WordPress 设置。
