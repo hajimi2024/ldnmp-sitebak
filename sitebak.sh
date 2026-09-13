@@ -2,7 +2,7 @@
 
 set -Eeuo pipefail
 
-VERSION="0.2.0"
+VERSION="0.2.2"
 APP_NAME="LDNMP 单站备份恢复工具"
 
 WEB_ROOT="${SITEBAK_WEB_ROOT:-/home/web}"
@@ -63,10 +63,59 @@ need_cmd() {
   fi
 }
 
+terminal_columns() {
+  local columns="${COLUMNS:-}"
+  if [[ ! "$columns" =~ ^[0-9]{1,4}$ ]]; then
+    columns="$(tput cols 2>/dev/null || true)"
+  fi
+  if [[ "$columns" =~ ^[0-9]{1,4}$ ]] && ((10#$columns > 0)); then
+    printf '%d' "$((10#$columns))"
+  else
+    printf '80'
+  fi
+}
+
+menu_separator() {
+  printf '%s\n' '------------------------'
+}
+
+menu_pair() {
+  local left="$1" right="$2" left_cells="$3"
+  # Keep the right column at terminal cell 40, matching Kejilion's menus.
+  if (( $(terminal_columns) >= 58 )) && [[ -n "$right" ]]; then
+    printf '%s%*s%s\n' "$left" "$((40 - left_cells))" '' "$right"
+  else
+    printf '%s\n' "$left"
+    [[ -z "$right" ]] || printf '%s\n' "$right"
+  fi
+}
+
+render_main_menu() {
+  printf '操作\n'
+  menu_separator
+  menu_pair '1.  列出 WordPress 站点' '2.  备份单个站点' 23
+  menu_pair '3.  恢复单个站点' '4.  查看备份文件' 16
+  menu_pair '5.  删除旧备份' '6.  更新脚本' 14
+  menu_pair '7.  快照管理' '' 12
+  menu_separator
+  printf '0.  退出\n'
+  menu_separator
+}
+
+render_snapshot_menu() {
+  printf '快照管理\n'
+  menu_separator
+  menu_pair '1.  创建完整快照' '2.  查看快照' 16
+  menu_pair '3.  恢复完整快照' '4.  删除快照' 16
+  menu_separator
+  printf '0.  返回上一级\n'
+  menu_separator
+}
+
 header() {
   clear_screen
   local width=44 padding border
-  if [[ "${COLUMNS:-80}" =~ ^[0-9]+$ ]] && (( ${COLUMNS:-80} < 46 )); then
+  if (( $(terminal_columns) < 46 )); then
     width=22
   fi
   padding=$(((width - 22) / 2))
@@ -819,7 +868,8 @@ snapshots_menu() {
   local choice
   while true; do
     header
-    printf '快照管理\n\n1. 创建完整快照\n2. 查看快照\n3. 恢复完整快照\n4. 删除快照\n0. 返回上一级\n\n请输入你的选择：'
+    render_snapshot_menu
+    printf '请输入你的选择：'
     read -r choice || return 0
     case "$choice" in
       1) run_menu_action create_snapshot_menu ;;
@@ -836,17 +886,7 @@ main_menu() {
   need_root
   while true; do
     header
-    cat <<EOF
-1. 列出 WordPress 站点
-2. 备份单个站点
-3. 恢复单个站点
-4. 查看备份文件
-5. 删除旧备份
-6. 更新脚本
-7. 快照管理
-0. 退出
-
-EOF
+    render_main_menu
     printf "请输入你的选择："
     read -r choice || exit 0
     case "$choice" in
