@@ -2,7 +2,7 @@
 
 set -Eeuo pipefail
 
-VERSION="0.2.6"
+VERSION="0.2.7"
 APP_NAME="LDNMP 单站备份恢复工具"
 
 WEB_ROOT="${SITEBAK_WEB_ROOT:-/home/web}"
@@ -621,7 +621,13 @@ select_backup() {
     fi
 
     if ((${#backups[@]} == 0)); then
-      warn "未找到符合条件的文件。" >&2
+      if [[ -n "$domain" && "$filter" == backup ]]; then
+        warn "当前域名无可用备份：$domain" >&2
+      elif [[ -n "$domain" ]]; then
+        warn "当前域名无可用${title}：$domain" >&2
+      else
+        warn "未找到${title}文件。" >&2
+      fi
       printf '\n' >&2
       menu_item '0. 返回上一级' >&2; printf '\n' >&2
       ui_prompt '请选择：' >&2
@@ -899,8 +905,10 @@ backup_menu() {
 }
 
 restore_menu() {
-  local archive
-  archive="$(select_backup "" backup)" || return 0
+  local domain archive
+  # Scan current sites first, then limit the restore list to the chosen domain.
+  domain="$(select_domain "请选择要恢复的站点")" || return 0
+  archive="$(select_backup "$domain" backup)" || return 0
   restore_site "$archive"
 }
 
