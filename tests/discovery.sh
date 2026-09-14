@@ -34,11 +34,18 @@ for columns in 80 30; do
 done
 python3 - "$tmp" <<'PY'
 import pathlib, re, sys, unicodedata
-for columns, expected in [(80, 46), (30, 24)]:
-    lines = pathlib.Path(sys.argv[1], f'header-{columns}').read_text().splitlines()[:3]
-    lines = [re.sub(r'\x1b\[[0-9;]*m', '', line) for line in lines]
-    widths = [sum(2 if unicodedata.east_asian_width(c) in 'WF' else 1 for c in line) for line in lines]
-    assert widths == [expected] * 3, (lines, widths)
-    assert lines[1].startswith('|') and lines[1].endswith('|')
+banner = r''' _      ____   _   _   __  __   ____
+| |    |  _ \ | \ | | |  \/  | |  _ \
+| |    | | | ||  \| | | |\/| | | |_) |
+| |___ | |_| || |\  | | |  | | |  __/
+|_____||____/ |_| \_| |_|  |_| |_|'''.splitlines()
+for columns, expected in [(80, banner + ['-' * 38, '        单站备份恢复工具']),
+                          (30, ['LDNMP', '-' * 16, '单站备份恢复工具'])]:
+    output = pathlib.Path(sys.argv[1], f'header-{columns}').read_text()
+    lines = re.sub(r'\x1b\[[0-9;]*m', '', output).lstrip('\n').splitlines()
+    assert lines[:len(expected)] == expected, lines
+    widths = [sum(2 if unicodedata.east_asian_width(c) in 'WF' else 1 for c in line)
+              for line in lines[:len(expected)]]
+    assert max(widths) <= columns, widths
 PY
-printf 'PASS: discovery, empty state, DB config, menu output, ambiguous config, header widths\n'
+printf 'PASS: discovery, empty state, DB config, menu output, ambiguous config and approved Banner\n'

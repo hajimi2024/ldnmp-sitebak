@@ -50,6 +50,7 @@ rm -f /usr/local/bin/kk
 SITEBAK_WEB_ROOT=/home/web kk
 SITEBAK_SITE_ROOT=/home/web/html kk
 SITEBAK_BACKUP_DIR=/home kk
+NO_COLOR=1 kk
 ```
 
 默认 GitHub 更新地址：

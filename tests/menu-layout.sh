@@ -16,26 +16,30 @@ COLUMNS=57 render_main_menu > "$fixture/main-narrow"
   run_menu_action() { "$@"; }
   show_sites() { printf '\nACTION:sites\n'; }
   backup_menu() { printf '\nACTION:backup\n'; }
-  show_backups() { printf '\nACTION:list-backups\n'; }
+  show_backups() { [[ ${1:-} == backup ]]; printf '\nACTION:list-backups\n'; }
   restore_menu() { printf '\nACTION:restore\n'; }
   snapshots_menu() { printf '\nACTION:snapshots\n'; }
-  delete_backup_menu() { printf '\nACTION:delete\n'; }
+  delete_backup_menu() { [[ ${1:-} == backup ]]; printf '\nACTION:delete\n'; }
   update_self() { printf '\nACTION:update\n'; }
   main_menu < <(printf '%s\n' 1 2 3 4 5 6 7 0)
 ) > "$fixture/routing"
 
 python3 - "$fixture" <<'PY'
 import pathlib
+import re
 import sys
 import unicodedata
 
 root = pathlib.Path(sys.argv[1])
 
+def read_plain(name):
+    return re.sub(r'\x1b\[[0-9;]*m', '', (root / name).read_text())
+
 def width(text):
     return sum(2 if unicodedata.east_asian_width(c) in 'WF' else 1 for c in text)
 
 def assert_layout(name, pairs):
-    lines = (root / name).read_text().splitlines()
+    lines = read_plain(name).splitlines()
     assert lines.count('-' * 24) == 3, lines
     for left, right in pairs:
         line = next(line for line in lines if line.startswith(left))
@@ -52,7 +56,7 @@ assert_layout('snapshots-wide', [
     ('3.  恢复完整快照', '4.  删除快照'),
 ])
 
-narrow = (root / 'main-narrow').read_text()
+narrow = read_plain('main-narrow')
 assert '1.  列出 WordPress 站点\n2.  备份单个站点' in narrow
 assert '2.  备份单个站点\n3.  查看备份文件' in narrow
 assert '7.  更新脚本\n' in narrow

@@ -2,7 +2,7 @@
 
 set -Eeuo pipefail
 
-VERSION="0.2.3"
+VERSION="0.2.4"
 APP_NAME="LDNMP 单站备份恢复工具"
 
 WEB_ROOT="${SITEBAK_WEB_ROOT:-/home/web}"
@@ -24,25 +24,34 @@ CERT_DIRS=(
   "/etc/letsencrypt"
 )
 
-RED="\033[31m"
-GREEN="\033[32m"
-YELLOW="\033[33m"
-BLUE="\033[36m"
-BOLD="\033[1m"
-RESET="\033[0m"
+RED=$'\033[0;31m'
+GREEN=$'\033[0;32m'
+YELLOW=$'\033[0;33m'
+BLUE=$'\033[0;96m'
+CYAN=$'\033[0;36m'
+WHITE=$'\033[0;97m'
+NUMBER=$'\033[1;33m'
+BOLD=$'\033[1;96m'
+RESET=$'\033[0m'
+if [[ ${TERM:-} == dumb || -n ${NO_COLOR+x} ]] || [[ ! -t 1 && ! -t 2 ]]; then
+  RED='' GREEN='' YELLOW='' BLUE='' CYAN='' WHITE='' NUMBER='' BOLD='' RESET=''
+fi
 
-info() { printf "${BLUE}[INFO]${RESET} %s\n" "$*"; }
-ok() { printf "${GREEN}[OK]${RESET} %s\n" "$*"; }
-warn() { printf "${YELLOW}[WARN]${RESET} %s\n" "$*"; }
-err() { printf "${RED}[ERROR]${RESET} %s\n" "$*" >&2; }
+info() { printf '%s[INFO] %s%s\n' "$BLUE" "$*" "$RESET"; }
+ok() { printf '%s[OK] %s%s\n' "$GREEN" "$*" "$RESET"; }
+warn() { printf '%s[WARN] %s%s\n' "$YELLOW" "$*" "$RESET"; }
+err() { printf '%s[ERROR] %s%s\n' "$RED" "$*" "$RESET" >&2; }
+ui_prompt() { printf '%s%s%s' "${2:-$BOLD}" "$1" "$RESET"; }
 
 pause() {
-  printf "\n按回车键继续..."
+  ui_prompt $'\n按回车键继续...'
   read -r _ || true
 }
 
 clear_screen() {
-  command -v clear >/dev/null 2>&1 && clear || true
+  if [[ -t 1 && ${TERM:-} != dumb ]]; then
+    command -v clear >/dev/null 2>&1 && clear || true
+  fi
 }
 
 need_root() {
@@ -76,57 +85,70 @@ terminal_columns() {
 }
 
 menu_separator() {
-  printf '%s\n' '------------------------'
+  printf '%s%s%s\n' "$CYAN" '------------------------' "$RESET"
+}
+
+menu_item() {
+  local text="$1" number="${1%% *}"
+  printf '%s%s%s%s%s' "$NUMBER" "$number" "$BLUE" "${text#"$number"}" "$RESET"
 }
 
 menu_pair() {
   local left="$1" right="$2" left_cells="$3"
-  # Keep the right column at terminal cell 40, matching Kejilion's menus.
-  if (( $(terminal_columns) >= 58 )) && [[ -n "$right" ]]; then
-    printf '%s%*s%s\n' "$left" "$((40 - left_cells))" '' "$right"
-  else
-    printf '%s\n' "$left"
-    [[ -z "$right" ]] || printf '%s\n' "$right"
+  menu_item "$left"
+  # ANSI color codes do not occupy cells; pad using the plain-text width.
+  if [[ -n "$right" ]]; then
+    if (( $(terminal_columns) >= 58 )); then
+      printf '%*s' "$((40 - left_cells))" ''
+    else
+      printf '\n'
+    fi
+    menu_item "$right"
   fi
+  printf '\n'
 }
 
 render_main_menu() {
-  printf '操作\n'
+  printf '%s操作%s\n' "$BOLD" "$RESET"
   menu_separator
   menu_pair '1.  列出 WordPress 站点' '2.  备份单个站点' 23
   menu_pair '3.  查看备份文件' '4.  恢复单个站点' 16
   menu_pair '5.  快照管理' '6.  删除旧备份' 12
   menu_pair '7.  更新脚本' '' 12
   menu_separator
-  printf '0.  退出\n'
+  menu_item '0.  退出'; printf '\n'
   menu_separator
 }
 
 render_snapshot_menu() {
-  printf '快照管理\n'
+  printf '%s快照管理%s\n' "$BOLD" "$RESET"
   menu_separator
   menu_pair '1.  创建完整快照' '2.  查看快照' 16
   menu_pair '3.  恢复完整快照' '4.  删除快照' 16
   menu_separator
-  printf '0.  返回上一级\n'
+  menu_item '0.  返回上一级'; printf '\n'
   menu_separator
 }
 
 header() {
   clear_screen
-  local width=44 padding border
-  if (( $(terminal_columns) < 46 )); then
-    width=22
+  printf '\n%s' "$BOLD"
+  if (( $(terminal_columns) >= 38 )); then
+    cat <<'EOF'
+ _      ____   _   _   __  __   ____
+| |    |  _ \ | \ | | |  \/  | |  _ \
+| |    | | | ||  \| | | |\/| | | |_) |
+| |___ | |_| || |\  | | |  | | |  __/
+|_____||____/ |_| \_| |_|  |_| |_|
+EOF
+    printf '%s%s%s\n' "$CYAN" '--------------------------------------' "$RESET"
+    printf '%s        单站备份恢复工具%s\n' "$CYAN" "$RESET"
+  else
+    printf 'LDNMP\n%s----------------\n%s单站备份恢复工具%s\n' "$CYAN" "$BLUE" "$RESET"
   fi
-  padding=$(((width - 22) / 2))
-  printf -v border '%*s' "$width" ''
-  border="${border// /-}"
-  printf "${BOLD}+%s+${RESET}\n" "$border"
-  printf "${BOLD}|%*s%s%*s|${RESET}\n" "$padding" '' "$APP_NAME" "$padding" ''
-  printf "${BOLD}+%s+${RESET}\n" "$border"
-  printf "版本：%s\n" "$VERSION"
-  printf "站点目录：%s\n" "$SITE_ROOT"
-  printf "备份目录：%s\n\n" "$BACKUP_DIR"
+  printf '\n%s版本：%s%s\n' "$WHITE" "$VERSION" "$RESET"
+  printf '%s站点目录：%s%s\n' "$WHITE" "$SITE_ROOT" "$RESET"
+  printf '%s备份目录：%s%s\n\n' "$WHITE" "$BACKUP_DIR" "$RESET"
 }
 
 valid_domain() {
@@ -180,19 +202,20 @@ select_domain() {
 
   while true; do
     header >&2
-    printf "%s：\n\n" "$title" >&2
+    printf '%s%s：%s\n\n' "$BOLD" "$title" "$RESET" >&2
     if ((${#sites[@]} == 0)); then
       warn "未在 $SITE_ROOT 下找到 WordPress 站点。检查域名目录或其 wordpress 子目录中的 wp-config.php；同时存在两份配置时不自动选择。" >&2
-      printf "\n0. 返回上一级\n" >&2
+      printf '\n' >&2
+      menu_item '0. 返回上一级' >&2; printf '\n' >&2
     else
       local i
       for i in "${!sites[@]}"; do
-        printf "%d. %s\n" "$((i + 1))" "${sites[$i]}" >&2
+        printf '%s%d.%s %s%s\n' "$NUMBER" "$((i + 1))" "$BLUE" "${sites[$i]}" "$RESET" >&2
       done
-      printf "0. 返回上一级\n" >&2
+      menu_item '0. 返回上一级' >&2; printf '\n' >&2
     fi
 
-    printf "\n请输入编号，或直接输入域名：" >&2
+    ui_prompt $'\n请输入编号，或直接输入域名：' >&2
     read -r choice || return 1
     choice="${choice//[[:space:]]/}"
 
@@ -216,7 +239,9 @@ select_domain() {
     fi
 
     warn "域名格式不正确。" >&2
-    printf "1. 重新输入\n0. 返回上一级\n请选择：" >&2
+    menu_item '1. 重新输入' >&2; printf '\n' >&2
+    menu_item '0. 返回上一级' >&2; printf '\n' >&2
+    ui_prompt '请选择：' >&2
     read -r retry || return 1
     [[ "$retry" == "0" ]] && return 1
   done
@@ -569,21 +594,28 @@ list_backups_for_domain() {
 
 select_backup() {
   local domain="${1:-}"
-  local filter="${2:-backup}" action="${3:-恢复}" choice number
+  local filter="${2:-backup}" action="${3:-恢复}" choice number title
+  case "$filter" in
+    backup) title='普通备份' ;;
+    snapshot|snapshots) title='快照' ;;
+    *) title='备份' ;;
+  esac
   local backups=()
   mapfile -t backups < <(list_backups_for_domain "$domain" "$filter")
 
   while true; do
     header >&2
     if [[ -n "$domain" ]]; then
-      printf "%s 可用备份：\n\n" "$domain" >&2
+      printf '%s%s 可用%s：%s\n\n' "$BOLD" "$domain" "$title" "$RESET" >&2
     else
-      printf "可用备份：\n\n" >&2
+      printf '%s可用%s：%s\n\n' "$BOLD" "$title" "$RESET" >&2
     fi
 
     if ((${#backups[@]} == 0)); then
       warn "未找到符合条件的文件。" >&2
-      printf "\n0. 返回上一级\n请选择：" >&2
+      printf '\n' >&2
+      menu_item '0. 返回上一级' >&2; printf '\n' >&2
+      ui_prompt '请选择：' >&2
       read -r choice || return 1
       [[ "$choice" == "0" ]] && return 1
       continue
@@ -594,9 +626,10 @@ select_backup() {
       file="${backups[$i]}"
       size="$(du -h "$file" | awk '{print $1}')"
       mtime="$(date -r "$file" +"%Y-%m-%d %H:%M:%S")"
-      printf "%d. [%s] %s    %s    %s\n" "$((i + 1))" "$(archive_label "$file")" "$(basename "$file")" "$size" "$mtime" >&2
+      printf '%s%d.%s [%s] %s    %s    %s%s\n' "$NUMBER" "$((i + 1))" "$BLUE" "$(archive_label "$file")" "$(basename "$file")" "$size" "$mtime" "$RESET" >&2
     done
-    printf "0. 返回上一级\n\n请选择要%s的文件：" "$action" >&2
+    menu_item '0. 返回上一级' >&2; printf '\n\n' >&2
+    ui_prompt "请选择要${action}的文件：" >&2
     read -r choice || return 1
 
     [[ "$choice" == "0" ]] && return 1
@@ -682,15 +715,15 @@ restore_site() (
 
   header
   warn "即将恢复站点：$domain"
-  printf "备份文件：%s\n" "$archive"
-  printf "目标目录：%s\n\n" "$target_dir"
-  printf "恢复会覆盖当前站点文件，并导入数据库。是否继续？请输入 yes 确认："
+  printf '%s备份文件：%s%s\n' "$BLUE" "$archive" "$RESET"
+  printf '%s目标目录：%s%s\n\n' "$BLUE" "$target_dir" "$RESET"
+  ui_prompt '恢复会覆盖当前站点文件，并导入数据库。是否继续？请输入 yes 确认：' "$YELLOW"
   read -r confirm || return 1
   [[ "$confirm" == "yes" ]] || { warn "已取消恢复。"; return 1; }
 
   if [[ -d "$target_dir" ]]; then
     while true; do
-      printf "恢复前是否创建完整快照（包含数据库）？[Y/n，0 返回] "
+      ui_prompt '恢复前是否创建完整快照（包含数据库）？[Y/n，0 返回] ' "$YELLOW"
       read -r snapshot_choice || return 1
       case "$snapshot_choice" in
         ''|Y|y)
@@ -751,34 +784,43 @@ show_sites() {
   mapfile -t sites < <(list_sites_array)
   if ((${#sites[@]} == 0)); then
     warn "未在 $SITE_ROOT 下找到 WordPress 站点。"
-    printf "检查路径：域名/wp-config.php 或 域名/wordpress/wp-config.php\n"
-    printf "同时存在两份配置的目录不会自动选择。\n"
+    printf '%s检查路径：域名/wp-config.php 或 域名/wordpress/wp-config.php%s\n' "$BLUE" "$RESET"
+    printf '%s同时存在两份配置的目录不会自动选择。%s\n' "$BLUE" "$RESET"
   else
-    printf "当前 WordPress 站点：\n\n"
-    printf "%s\n" "${sites[@]}" | nl -w1 -s'. '
+    printf '%s当前 WordPress 站点：%s\n\n' "$BOLD" "$RESET"
+    local i
+    for i in "${!sites[@]}"; do
+      printf '%s%d.%s %s%s\n' "$NUMBER" "$((i + 1))" "$BLUE" "${sites[$i]}" "$RESET"
+    done
   fi
 }
 
 show_backups() {
   header
-  local backups=()
-  mapfile -t backups < <(list_backups_for_domain "" "${1:-all}")
+  local backups=() filter="${1:-backup}" title
+  case "$filter" in
+    backup) title='普通备份' ;;
+    snapshot|snapshots) title='快照' ;;
+    *) title='备份' ;;
+  esac
+  printf '%s%s文件：%s\n\n' "$BOLD" "$title" "$RESET"
+  mapfile -t backups < <(list_backups_for_domain "" "$filter")
   if ((${#backups[@]} == 0)); then
-    warn "未找到备份文件。"
+    warn "未找到${title}文件。"
   else
     local file
     for file in "${backups[@]}"; do
-      printf "[%s] %s    %s    %s\n" "$(archive_label "$file")" "$(basename "$file")" "$(du -h "$file" | awk '{print $1}')" "$(date -r "$file" +"%Y-%m-%d %H:%M:%S")"
+      printf '%s[%s] %s    %s    %s%s\n' "$BLUE" "$(archive_label "$file")" "$(basename "$file")" "$(du -h "$file" | awk '{print $1}')" "$(date -r "$file" +"%Y-%m-%d %H:%M:%S")" "$RESET"
     done
   fi
 }
 
 delete_backup_menu() {
   local file
-  file="$(select_backup "" "${1:-all}" 删除)" || return 0
+  file="$(select_backup "" "${1:-backup}" 删除)" || return 0
   header
-  warn "即将删除备份：$file"
-  printf "请输入 yes 确认删除："
+  warn "即将删除$(archive_label "$file")：$file"
+  ui_prompt '请输入 yes 确认删除：' "$YELLOW"
   read -r confirm || return 1
   if [[ "$confirm" == "yes" ]]; then
     rm -f "$file"
@@ -791,7 +833,9 @@ delete_backup_menu() {
 return_to_menu() {
   local choice
   while true; do
-    printf '\n0. 返回上一级\n请输入：'
+    printf '\n'
+    menu_item '0. 返回上一级'; printf '\n'
+    ui_prompt '请输入：'
     read -r choice || return 0
     [[ "$choice" == "0" ]] && return 0
     warn "请输入 0 返回上一级。"
@@ -869,7 +913,7 @@ snapshots_menu() {
   while true; do
     header
     render_snapshot_menu
-    printf '请输入你的选择：'
+    ui_prompt '请输入你的选择：'
     read -r choice || return 0
     case "$choice" in
       1) run_menu_action create_snapshot_menu ;;
@@ -887,15 +931,15 @@ main_menu() {
   while true; do
     header
     render_main_menu
-    printf "请输入你的选择："
+    ui_prompt '请输入你的选择：'
     read -r choice || exit 0
     case "$choice" in
       1) run_menu_action show_sites ;;
       2) run_menu_action backup_menu ;;
-      3) run_menu_action show_backups ;;
+      3) run_menu_action show_backups backup ;;
       4) run_menu_action restore_menu ;;
       5) snapshots_menu ;;
-      6) run_menu_action delete_backup_menu ;;
+      6) run_menu_action delete_backup_menu backup ;;
       7) run_menu_action update_self ;;
       0) exit 0 ;;
       *) warn "无效的选择，请重试。"; sleep 1 ;;
@@ -925,6 +969,7 @@ $APP_NAME v$VERSION
   SITEBAK_BACKUP_DIR     默认 /home
   SITEBAK_UPDATE_URL     默认 GitHub raw 地址
   SITEBAK_DB_CONTAINER   可选，指定数据库容器名称
+  NO_COLOR              设置后关闭彩色输出
 EOF
 }
 
