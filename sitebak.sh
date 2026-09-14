@@ -2,7 +2,7 @@
 
 set -Eeuo pipefail
 
-VERSION="0.2.4"
+VERSION="0.2.5"
 APP_NAME="LDNMP 单站备份恢复工具"
 
 WEB_ROOT="${SITEBAK_WEB_ROOT:-/home/web}"
@@ -108,12 +108,19 @@ menu_pair() {
   printf '\n'
 }
 
+menu_row_gap() {
+  printf '\n'
+}
+
 render_main_menu() {
   printf '%s操作%s\n' "$BOLD" "$RESET"
   menu_separator
   menu_pair '1.  列出 WordPress 站点' '2.  备份单个站点' 23
+  menu_row_gap
   menu_pair '3.  查看备份文件' '4.  恢复单个站点' 16
+  menu_row_gap
   menu_pair '5.  快照管理' '6.  删除旧备份' 12
+  menu_row_gap
   menu_pair '7.  更新脚本' '' 12
   menu_separator
   menu_item '0.  退出'; printf '\n'
@@ -124,6 +131,7 @@ render_snapshot_menu() {
   printf '%s快照管理%s\n' "$BOLD" "$RESET"
   menu_separator
   menu_pair '1.  创建完整快照' '2.  查看快照' 16
+  menu_row_gap
   menu_pair '3.  恢复完整快照' '4.  删除快照' 16
   menu_separator
   menu_item '0.  返回上一级'; printf '\n'
@@ -143,8 +151,9 @@ header() {
 EOF
     printf '%s%s%s\n' "$CYAN" '--------------------------------------' "$RESET"
     printf '%s        单站备份恢复工具%s\n' "$CYAN" "$RESET"
+    printf '%s%s%s\n' "$CYAN" '--------------------------------------' "$RESET"
   else
-    printf 'LDNMP\n%s----------------\n%s单站备份恢复工具%s\n' "$CYAN" "$BLUE" "$RESET"
+    printf 'LDNMP\n%s----------------\n%s单站备份恢复工具%s\n%s----------------%s\n' "$CYAN" "$BLUE" "$RESET" "$CYAN" "$RESET"
   fi
   printf '\n%s版本：%s%s\n' "$WHITE" "$VERSION" "$RESET"
   printf '%s站点目录：%s%s\n' "$WHITE" "$SITE_ROOT" "$RESET"

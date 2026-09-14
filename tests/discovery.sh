@@ -39,8 +39,8 @@ banner = r''' _      ____   _   _   __  __   ____
 | |    | | | ||  \| | | |\/| | | |_) |
 | |___ | |_| || |\  | | |  | | |  __/
 |_____||____/ |_| \_| |_|  |_| |_|'''.splitlines()
-for columns, expected in [(80, banner + ['-' * 38, '        单站备份恢复工具']),
-                          (30, ['LDNMP', '-' * 16, '单站备份恢复工具'])]:
+for columns, expected in [(80, banner + ['-' * 38, '        单站备份恢复工具', '-' * 38]),
+                          (30, ['LDNMP', '-' * 16, '单站备份恢复工具', '-' * 16])]:
     output = pathlib.Path(sys.argv[1], f'header-{columns}').read_text()
     lines = re.sub(r'\x1b\[[0-9;]*m', '', output).lstrip('\n').splitlines()
     assert lines[:len(expected)] == expected, lines

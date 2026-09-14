@@ -41,10 +41,13 @@ def width(text):
 def assert_layout(name, pairs):
     lines = read_plain(name).splitlines()
     assert lines.count('-' * 24) == 3, lines
-    for left, right in pairs:
-        line = next(line for line in lines if line.startswith(left))
+    for index, (left, right) in enumerate(pairs):
+        row_index = next(index for index, line in enumerate(lines) if line.startswith(left))
+        line = lines[row_index]
         assert line.endswith(right), line
         assert width(line[:line.index(right)]) == 40, (line, width(line[:line.index(right)]))
+        if index < len(pairs) - 1:
+            assert lines[row_index + 1] == '', lines
 
 assert_layout('main-wide', [
     ('1.  列出 WordPress 站点', '2.  备份单个站点'),
@@ -58,7 +61,7 @@ assert_layout('snapshots-wide', [
 
 narrow = read_plain('main-narrow')
 assert '1.  列出 WordPress 站点\n2.  备份单个站点' in narrow
-assert '2.  备份单个站点\n3.  查看备份文件' in narrow
+assert '2.  备份单个站点\n\n3.  查看备份文件' in narrow
 assert '7.  更新脚本\n' in narrow
 assert '                 2.  备份单个站点' not in narrow
 

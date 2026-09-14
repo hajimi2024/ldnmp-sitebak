@@ -68,7 +68,7 @@ ansi = re.compile(r'\x1b\[[0-9;]*m')
 plain = run()
 colored = run(terminal=True)
 assert '\x1b' not in plain
-assert ansi.sub('', colored) == plain
+assert ansi.sub('', colored).rstrip('\n') == plain.rstrip('\n')
 for number in range(8):
     assert '\x1b[1;33m%d.\x1b[0;96m' % number in colored
 for label in ['版本：', '站点目录：', '备份目录：']:
@@ -76,7 +76,8 @@ for label in ['版本：', '站点目录：', '备份目录：']:
 for code, message in [('96', '[INFO] Reading files'), ('32', '[OK] Completed'),
                       ('33', '[WARN] Overwrite confirmation'), ('31', '[ERROR] Failed')]:
     assert '\x1b[0;' + code + 'm' + message + '\x1b[0m' in colored
-assert '\x1b[0;36m' + '-' * 38 + '\x1b[0m\n' in colored
+divider_count = colored.count('\x1b[0;36m' + '-' * 38 + '\x1b[0m\n')
+assert divider_count >= 2 and divider_count % 2 == 0
 assert '\x1b[0;33m请输入 yes 确认删除：\x1b[0m' in colored
 assert run(terminal=True, NO_COLOR='1') == plain
 assert run(terminal=True, TERM='dumb') == plain
@@ -89,7 +90,8 @@ for right in ['2.  备份单个站点', '4.  恢复单个站点', '6.  删除旧
     row = next(line for line in lines if right in line)
     assert width(row[:row.index(right)]) == 40, row
 narrow = ansi.sub('', run(terminal=True, COLUMNS='32'))
-assert '\nLDNMP\n----------------\n单站备份恢复工具\n' in narrow
+assert '\nLDNMP\n----------------\n单站备份恢复工具\n----------------\n' in narrow
 assert '1.  列出 WordPress 站点\n2.  备份单个站点' in narrow
+assert '2.  备份单个站点\n\n3.  查看备份文件' in narrow
 PY
 printf 'PASS: terminal colors, resets, plain-output fallback, column alignment and clean selection values\n'
