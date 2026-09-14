@@ -2,7 +2,7 @@
 
 set -Eeuo pipefail
 
-VERSION="0.2.2"
+VERSION="0.2.3"
 APP_NAME="LDNMP 单站备份恢复工具"
 
 WEB_ROOT="${SITEBAK_WEB_ROOT:-/home/web}"
@@ -94,9 +94,9 @@ render_main_menu() {
   printf '操作\n'
   menu_separator
   menu_pair '1.  列出 WordPress 站点' '2.  备份单个站点' 23
-  menu_pair '3.  恢复单个站点' '4.  查看备份文件' 16
-  menu_pair '5.  删除旧备份' '6.  更新脚本' 14
-  menu_pair '7.  快照管理' '' 12
+  menu_pair '3.  查看备份文件' '4.  恢复单个站点' 16
+  menu_pair '5.  快照管理' '6.  删除旧备份' 12
+  menu_pair '7.  更新脚本' '' 12
   menu_separator
   printf '0.  退出\n'
   menu_separator
@@ -892,11 +892,11 @@ main_menu() {
     case "$choice" in
       1) run_menu_action show_sites ;;
       2) run_menu_action backup_menu ;;
-      3) run_menu_action restore_menu ;;
-      4) run_menu_action show_backups ;;
-      5) run_menu_action delete_backup_menu ;;
-      6) run_menu_action update_self ;;
-      7) snapshots_menu ;;
+      3) run_menu_action show_backups ;;
+      4) run_menu_action restore_menu ;;
+      5) snapshots_menu ;;
+      6) run_menu_action delete_backup_menu ;;
+      7) run_menu_action update_self ;;
       0) exit 0 ;;
       *) warn "无效的选择，请重试。"; sleep 1 ;;
     esac

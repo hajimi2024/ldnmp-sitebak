@@ -15,10 +15,10 @@ run_menu_action fail_mid_task < <(printf '0\n') >> "$fixture/output" 2>&1
 INSTALL_PATH="$fixture/kk"
 printf 'old script\n' > "$INSTALL_PATH"
 curl() { return 22; }
-main_menu < <(printf '6\n0\n0\n') > "$fixture/main" 2>&1 &
+main_menu < <(printf '7\n0\n0\n') > "$fixture/main" 2>&1 &
 menu_pid=$!
 wait "$menu_pid"
-[[ $(grep -c '6.  更新脚本' "$fixture/main") == 2 ]]
+[[ $(grep -c '7.  更新脚本' "$fixture/main") == 2 ]]
 [[ $(< "$INSTALL_PATH") == 'old script' ]]
 curl() {
   local output
