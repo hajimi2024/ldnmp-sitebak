@@ -2,7 +2,7 @@
 
 set -Eeuo pipefail
 
-VERSION="0.2.5"
+VERSION="0.2.6"
 APP_NAME="LDNMP 单站备份恢复工具"
 
 WEB_ROOT="${SITEBAK_WEB_ROOT:-/home/web}"
@@ -26,15 +26,15 @@ CERT_DIRS=(
 
 RED=$'\033[0;31m'
 GREEN=$'\033[0;32m'
+LIGHT_GREEN=$'\033[0;92m'
 YELLOW=$'\033[0;33m'
 BLUE=$'\033[0;96m'
 CYAN=$'\033[0;36m'
-WHITE=$'\033[0;97m'
 NUMBER=$'\033[1;33m'
 BOLD=$'\033[1;96m'
 RESET=$'\033[0m'
 if [[ ${TERM:-} == dumb || -n ${NO_COLOR+x} ]] || [[ ! -t 1 && ! -t 2 ]]; then
-  RED='' GREEN='' YELLOW='' BLUE='' CYAN='' WHITE='' NUMBER='' BOLD='' RESET=''
+  RED='' GREEN='' LIGHT_GREEN='' YELLOW='' BLUE='' CYAN='' NUMBER='' BOLD='' RESET=''
 fi
 
 info() { printf '%s[INFO] %s%s\n' "$BLUE" "$*" "$RESET"; }
@@ -155,9 +155,9 @@ EOF
   else
     printf 'LDNMP\n%s----------------\n%s单站备份恢复工具%s\n%s----------------%s\n' "$CYAN" "$BLUE" "$RESET" "$CYAN" "$RESET"
   fi
-  printf '\n%s版本：%s%s\n' "$WHITE" "$VERSION" "$RESET"
-  printf '%s站点目录：%s%s\n' "$WHITE" "$SITE_ROOT" "$RESET"
-  printf '%s备份目录：%s%s\n\n' "$WHITE" "$BACKUP_DIR" "$RESET"
+  printf '\n%s版本：%s%s%s\n' "$GREEN" "$LIGHT_GREEN" "$VERSION" "$RESET"
+  printf '%s站点目录：%s%s%s\n' "$GREEN" "$LIGHT_GREEN" "$SITE_ROOT" "$RESET"
+  printf '%s备份目录：%s%s%s\n\n' "$GREEN" "$LIGHT_GREEN" "$BACKUP_DIR" "$RESET"
 }
 
 valid_domain() {
