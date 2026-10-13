@@ -18,7 +18,7 @@
 - 固定五行 LDNMP 字符 Banner，中文副标题上下使用同宽分隔线；采用亮青蓝主色、黄色编号、草绿色标签和浅草绿色版本与目录信息，以及绿/红/黄状态提示。
 - 支持从 GitHub 更新本地脚本。
 
-## 安装
+## 首次安装
 
 ```bash
 (set -o pipefail; curl -fsSL --connect-timeout 15 --max-time 120 https://raw.githubusercontent.com/hajimi2024/ldnmp-sitebak/main/install.sh | bash) && echo "安装成功，输入 kk 进入菜单。" || (echo "安装失败，请查看上方报错。" >&2; exit 1)

@@ -7,7 +7,7 @@ v0.1.2 起，快捷命令为 `kk`。已安装旧版的用户也请执行下方�
 旧版的 `sitebak update` 会写入旧路径，不能直接完成首次命令迁移。
 备份文件的位置和格式不变，无需移动或重新备份。
 
-## 一键安装
+## 首次安装
 
 ```bash
 (set -o pipefail; curl -fsSL --connect-timeout 15 --max-time 120 https://raw.githubusercontent.com/hajimi2024/ldnmp-sitebak/main/install.sh | bash) && echo "安装成功，输入 kk 进入菜单。" || (echo "安装失败，请查看上方报错。" >&2; exit 1)
