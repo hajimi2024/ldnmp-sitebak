@@ -85,16 +85,10 @@ SITEBAK_BACKUP_DIR=/root/backups kk backup example.com
 /home/<域名>_<YYYYMMDD>_<HHMMSS>.tar.gz
 ```
 
-例如：
-
-```text
-/home/example.com_20260912_153000.tar.gz
-```
-
 上面的 `.tar.gz` 是外层备份包，以下七项是它内部的目录和文件：
 
 ```text
-example.com_20260912_153000.tar.gz
+<域名>_<YYYYMMDD>_<HHMMSS>.tar.gz
 └── 解压后
     ├── files/site-files.tar.gz
     ├── database/数据库名.sql.gz
