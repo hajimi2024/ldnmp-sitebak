@@ -77,17 +77,35 @@ SSL 证书：/home/web/certs
 SITEBAK_BACKUP_DIR=/root/backups kk backup example.com
 ```
 
-## 备份包内容
+## 备份包结构
+
+单站备份完成后，服务器默认只保存一个完整压缩包：
 
 ```text
-files/site-files.tar.gz
-database/数据库名.sql.gz
-nginx/nginx-files.tar.gz
-certs/cert-items.tar.gz
-meta/
-manifest.json
-restore-notes.txt
+/home/<域名>_<YYYYMMDD>_<HHMMSS>.tar.gz
 ```
+
+例如：
+
+```text
+/home/example.com_20260912_153000.tar.gz
+```
+
+上面的 `.tar.gz` 是外层备份包，以下七项是它内部的目录和文件：
+
+```text
+example.com_20260912_153000.tar.gz
+└── 解压后
+    ├── files/site-files.tar.gz
+    ├── database/数据库名.sql.gz
+    ├── nginx/nginx-files.tar.gz
+    ├── certs/cert-items.tar.gz
+    ├── meta/
+    ├── manifest.json
+    └── restore-notes.txt
+```
+
+默认备份目录是 `/home`；如使用 `SITEBAK_BACKUP_DIR` 覆盖，压缩包会保存到指定目录。内部临时文件不会作为独立备份文件长期保留。
 
 ## 注意事项
 
