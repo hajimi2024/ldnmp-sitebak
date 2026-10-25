@@ -11,7 +11,9 @@ printf 'unchanged\n' > "$sentinel"
 clear_screen() { :; }
 need_root() { :; }
 
-migration_not_implemented change-domain > "$fixture/placeholder-output"
+migration_log_init change-domain
+migration_log WARN '测试日志；未修改网站或数据库。'
+migration_log_finish 0
 [[ $(< "$sentinel") == unchanged ]]
 [[ -d "$MIGRATION_LOG_DIR" ]]
 [[ $(stat -c '%a' "$MIGRATION_LOG_DIR") == 700 ]]
@@ -19,7 +21,6 @@ migration_not_implemented change-domain > "$fixture/placeholder-output"
 [[ $(stat -c '%a' "$MIGRATION_LOG_FILE") == 600 ]]
 grep -Fq '模式=change-domain' "$MIGRATION_LOG_FILE"
 grep -Fq '未修改网站或数据库' "$MIGRATION_LOG_FILE"
-grep -Fq '功能尚未实现；本次未修改网站或数据库' "$fixture/placeholder-output"
 
 migration_log INFO 'DB_PASSWORD=topsecret TOKEN=abc123 mysql://user:password@mysql/site --password=visible'
 ! grep -Eq 'topsecret|abc123|password@|--password=visible' "$MIGRATION_LOG_FILE"
@@ -37,7 +38,7 @@ grep -Fq 'DB_PASSWORD=[REDACTED]' "$fixture/recent"
 (
   trap - EXIT
   header() { :; }
-  migration_not_implemented() { printf 'ACTION:%s\n' "$1"; }
+  migration_preflight() { printf 'ACTION:%s\n' "$1"; }
   show_recent_migration_log() { printf 'ACTION:recent-log\n'; }
   migration_menu < <(printf '%s\n' invalid 1 0 2 0 3 0 0)
 ) > "$fixture/menu-routing"
@@ -56,4 +57,4 @@ empty_log_dir="$fixture/no logs"
 MIGRATION_LOG_DIR="$empty_log_dir" show_recent_migration_log > "$fixture/no-log"
 grep -Fq '尚无迁移日志' "$fixture/no-log"
 
-printf 'PASS: migration menu, command entry, safe placeholder, protected logs and redaction\n'
+printf 'PASS: migration menu, command entry, protected logs, recent selection and redaction\n'

@@ -2,7 +2,7 @@
 
 set -Eeuo pipefail
 
-VERSION="0.3.5"
+VERSION="0.3.6"
 APP_NAME="LDNMP 单站备份恢复工具"
 
 WEB_ROOT="${SITEBAK_WEB_ROOT:-/home/web}"
@@ -12,6 +12,7 @@ INSTALL_PATH="${SITEBAK_INSTALL_PATH:-/usr/local/bin/kk}"
 UPDATE_URL="${SITEBAK_UPDATE_URL:-https://raw.githubusercontent.com/hajimi2024/ldnmp-sitebak/main/sitebak.sh}"
 PROJECT_URL="https://github.com/hajimi2024/ldnmp-sitebak"
 MIGRATION_LOG_DIR="${SITEBAK_MIGRATION_LOG_DIR:-/var/log/sitebak}"
+MIGRATION_TMP_ROOT="${SITEBAK_MIGRATION_TMP_ROOT:-/tmp}"
 MIGRATION_LOG_FILE=''
 
 NGINX_CONF_DIRS=(
@@ -112,15 +113,6 @@ show_recent_migration_log() {
   info "最近一次迁移日志：$latest"
   printf '\n'
   cat -- "$latest"
-}
-
-migration_not_implemented() {
-  local mode="$1"
-  migration_log_init "$mode"
-  migration_log WARN '阶段一仅提供菜单、入口和日志框架；未修改网站或数据库。'
-  warn '站点迁移功能尚未实现；本次未修改网站或数据库。'
-  ok "迁移日志已保存：$MIGRATION_LOG_FILE"
-  migration_log_finish 0
 }
 
 ui_read() {
@@ -294,6 +286,57 @@ find_wp_config() {
   printf '%s\n' "${configs[0]}"
 }
 
+wp_define_count() {
+  local file="$1" key="$2"
+  awk -v key="$key" '
+    $0 ~ "^[[:space:]]*define[[:space:]]*\\([[:space:]]*[\"\047]" key "[\"\047][[:space:]]*," { count++ }
+    END { print count + 0 }
+  ' "$file"
+}
+
+wp_define_line() {
+  local file="$1" key="$2"
+  awk -v key="$key" '
+    $0 ~ "^[[:space:]]*define[[:space:]]*\\([[:space:]]*[\"\047]" key "[\"\047][[:space:]]*," { print; exit }
+  ' "$file"
+}
+
+parse_migration_wp_define() {
+  local file="$1" key="$2"
+  awk -v key="$key" '
+    $0 ~ "^[[:space:]]*define[[:space:]]*\\([[:space:]]*[\"\047]" key "[\"\047][[:space:]]*," {
+      line=$0
+      sub(/^[^,]*,[[:space:]]*/, "", line)
+      sub(/["\047][[:space:]]*\)[[:space:]]*;.*/, "", line)
+      sub(/^[[:space:]]*["\047]/, "", line)
+      print line
+      exit
+    }
+  ' "$file"
+}
+
+validate_migration_wp_config() {
+  local file="$1" label="$2" key count
+  [[ -f "$file" ]] || { err "${label}缺少 wp-config.php。"; return 1; }
+  for key in DB_NAME DB_USER DB_PASSWORD DB_HOST; do
+    count="$(wp_define_count "$file" "$key")"
+    if [[ "$count" != 1 ]]; then
+      err "${label}的 ${key} 必须存在且只能定义一次。"
+      return 1
+    fi
+  done
+}
+
+read_migration_db_config_file() {
+  local wp_config="$1"
+  validate_migration_wp_config "$wp_config" '目标 WordPress 配置' || return 1
+  DB_NAME="$(parse_migration_wp_define "$wp_config" DB_NAME)"
+  DB_USER="$(parse_migration_wp_define "$wp_config" DB_USER)"
+  DB_PASSWORD="$(parse_migration_wp_define "$wp_config" DB_PASSWORD)"
+  DB_HOST="$(parse_migration_wp_define "$wp_config" DB_HOST)"
+  [[ -n "$DB_NAME" && -n "$DB_USER" && -n "$DB_HOST" ]] || { err '目标 WordPress 数据库配置不完整。'; return 1; }
+}
+
 list_sites_array() {
   local sites=()
   if [[ -d "$SITE_ROOT" ]]; then
@@ -359,6 +402,39 @@ select_domain() {
     ui_prompt '请选择：' >&2
     ui_read retry 2 || return 1
     [[ "$retry" == "0" ]] && return 1
+  done
+}
+
+select_existing_domain() {
+  local title="${1:-请选择目标站点}" choice number
+  local sites=()
+  mapfile -t sites < <(list_sites_array)
+
+  while true; do
+    header >&2
+    printf '%s%s：%s\n\n' "$BOLD" "$title" "$RESET" >&2
+    if ((${#sites[@]} == 0)); then
+      warn "未在 $SITE_ROOT 下找到可用的 WordPress 目标站点。" >&2
+      menu_item '0. 返回上一级' >&2; printf '\n' >&2
+    else
+      local i
+      for i in "${!sites[@]}"; do
+        printf '%s%d.%s %s%s\n' "$NUMBER" "$((i + 1))" "$BLUE" "${sites[$i]}" "$RESET" >&2
+      done
+      menu_item '0. 返回上一级' >&2; printf '\n' >&2
+    fi
+
+    ui_prompt $'\n请选择目标站点编号：' >&2
+    ui_read choice 2 || return 1
+    [[ "$choice" == 0 ]] && return 1
+    if [[ "$choice" =~ ^[0-9]{1,9}$ ]]; then
+      number=$((10#$choice))
+      if ((number >= 1 && number <= ${#sites[@]})); then
+        printf '%s' "${sites[$((number - 1))]}"
+        return 0
+      fi
+    fi
+    warn '无效的编号，请从当前站点列表中选择。' >&2
   done
 }
 
@@ -771,6 +847,326 @@ extract_manifest_value() {
   sed -n "s/.*\"$key\"[[:space:]]*:[[:space:]]*\"\\([^\"]*\\)\".*/\\1/p" "$file" | head -n 1
 }
 
+manifest_string_once() {
+  local file="$1" key="$2" occurrences
+  local values=()
+  occurrences="$(grep -o "\"$key\"[[:space:]]*:" "$file" | wc -l || true)"
+  [[ "$occurrences" == 1 ]] || { err "manifest.json 中的 $key 必须存在且只能出现一次。"; return 1; }
+  mapfile -t values < <(sed -n "s/.*\"$key\"[[:space:]]*:[[:space:]]*\"\\([^\"]*\\)\".*/\\1/p" "$file")
+  if ((${#values[@]} != 1)); then
+    err "manifest.json 中的 $key 必须存在且只能出现一次。"
+    return 1
+  fi
+  printf '%s' "${values[0]}"
+}
+
+manifest_number_once() {
+  local file="$1" key="$2" occurrences
+  local values=()
+  occurrences="$(grep -o "\"$key\"[[:space:]]*:" "$file" | wc -l || true)"
+  [[ "$occurrences" == 1 ]] || { err "manifest.json 中的 $key 必须存在且只能出现一次。"; return 1; }
+  mapfile -t values < <(sed -n "s/.*\"$key\"[[:space:]]*:[[:space:]]*\\([0-9][0-9]*\\).*/\\1/p" "$file")
+  if ((${#values[@]} != 1)); then
+    err "manifest.json 中的 $key 必须存在且只能出现一次。"
+    return 1
+  fi
+  printf '%s' "${values[0]}"
+}
+
+validate_tar_archive() {
+  local archive="$1" label="$2" allow_symlinks="${3:-no}" listing verbose types member clean line target
+  if ! listing="$(tar --quoting-style=escape -tzf "$archive")"; then
+    err "${label}无法读取。"
+    return 1
+  fi
+  while IFS= read -r member; do
+    [[ -n "$member" ]] || { err "${label}包含空文件名。"; return 1; }
+    clean="$member"
+    while [[ "$clean" == ./* ]]; do clean="${clean#./}"; done
+    [[ -n "$clean" || "$member" == . || "$member" == ./ ]] || { err "${label}包含异常路径。"; return 1; }
+    if [[ "$clean" == /* || "$clean" == .. || "$clean" == ../* || "$clean" == */../* || "$clean" == */.. || "$clean" == *$'\r'* ]]; then
+      err "${label}包含越界路径：$member"
+      return 1
+    fi
+  done <<< "$listing"
+
+  if ! verbose="$(tar --quoting-style=escape -tzvf "$archive")"; then
+    err "${label}类型检查失败。"
+    return 1
+  fi
+  types="$(cut -c1 <<< "$verbose")"
+  if grep -Evq '^[-dlh]$' <<< "$types"; then
+    err "${label}包含设备、管道或其他不支持的特殊文件。"
+    return 1
+  fi
+  if grep -q '^h$' <<< "$types"; then
+    err "${label}包含不支持的硬链接。"
+    return 1
+  fi
+  if [[ "$allow_symlinks" != yes ]] && grep -q '^l$' <<< "$types"; then
+    err "${label}不允许包含符号链接。"
+    return 1
+  fi
+  if [[ "$allow_symlinks" == yes ]]; then
+    while IFS= read -r line; do
+      [[ "${line:0:1}" == l ]] || continue
+      [[ "$line" == *' -> '* ]] || { err "${label}包含无法识别的符号链接。"; return 1; }
+      target="${line##* -> }"
+      if [[ "$target" == /* || "$target" == .. || "$target" == ../* || "$target" == */../* || "$target" == */.. ]]; then
+        err "${label}包含指向目录外部的符号链接。"
+        return 1
+      fi
+    done <<< "$verbose"
+  fi
+}
+
+validate_extracted_tree() {
+  local root="$1" label="$2" root_real link target resolved special
+  root_real="$(realpath -e -- "$root")" || return 1
+  special="$(find "$root" -mindepth 1 ! -type f ! -type d ! -type l -print -quit)"
+  if [[ -n "$special" ]]; then
+    err "${label}包含不支持的特殊文件：$special"
+    return 1
+  fi
+  while IFS= read -r -d '' link; do
+    target="$(readlink -- "$link")" || return 1
+    [[ "$target" != /* ]] || { err "${label}包含绝对符号链接：$link"; return 1; }
+    resolved="$(realpath -m -- "$(dirname -- "$link")/$target")" || return 1
+    case "$resolved" in
+      "$root_real"|"$root_real"/*) ;;
+      *) err "${label}包含指向目录外部的符号链接：$link"; return 1 ;;
+    esac
+  done < <(find "$root" -type l -print0)
+}
+
+extract_safe_tar() {
+  local archive="$1" destination="$2" label="$3" allow_symlinks="${4:-no}"
+  validate_tar_archive "$archive" "$label" "$allow_symlinks" || return 1
+  mkdir -p "$destination"
+  tar --no-same-owner --delay-directory-restore -C "$destination" -xzf "$archive" || {
+    err "${label}解压失败。"
+    return 1
+  }
+  validate_extracted_tree "$destination" "$label"
+}
+
+inspect_migration_archive() {
+  local archive="$1" package_dir="$2" source_site_dir="$3"
+  local manifest tool archive_type version created_at source_site_dir_record source_db_host filename_domain db_name wp_config source_db_name component count payload
+  [[ -f "$archive" ]] || { err "备份文件不存在：$archive"; return 1; }
+  [[ "$(archive_kind "$archive" || true)" == backup ]] || { err '站点迁移只接受普通备份。'; return 1; }
+
+  extract_safe_tar "$archive" "$package_dir" '外层备份包' no || return 1
+  manifest="$package_dir/manifest.json"
+  [[ -f "$manifest" ]] || { err '备份包缺少 manifest.json。'; return 1; }
+  [[ -f "$package_dir/files/site-files.tar.gz" ]] || { err '备份包缺少站点文件。'; return 1; }
+  [[ -f "$package_dir/restore-notes.txt" && -d "$package_dir/meta" ]] || { err '备份包结构不完整。'; return 1; }
+
+  tool="$(manifest_string_once "$manifest" tool)" || return 1
+  version="$(manifest_string_once "$manifest" version)" || return 1
+  archive_type="$(manifest_string_once "$manifest" archive_type)" || return 1
+  created_at="$(manifest_string_once "$manifest" created_at)" || return 1
+  MIGRATION_SOURCE_DOMAIN="$(manifest_string_once "$manifest" domain)" || return 1
+  source_site_dir_record="$(manifest_string_once "$manifest" site_dir)" || return 1
+  db_name="$(manifest_string_once "$manifest" db_name)" || return 1
+  source_db_host="$(manifest_string_once "$manifest" db_host)" || return 1
+  [[ "$tool" == sitebak && -n "$version" && -n "$created_at" && -n "$source_site_dir_record" && -n "$source_db_host" && "$archive_type" == backup ]] || { err '所选文件不是 SiteBak 普通备份。'; return 1; }
+  valid_domain "$MIGRATION_SOURCE_DOMAIN" || { err "备份包源域名不合法：$MIGRATION_SOURCE_DOMAIN"; return 1; }
+  [[ "$db_name" =~ ^[A-Za-z0-9_-]+$ ]] || { err '备份包数据库名称不合法。'; return 1; }
+  if [[ "${archive##*/}" =~ ^(.+)_[0-9]{8}_[0-9]{6}\.tar\.gz$ ]]; then
+    filename_domain="${BASH_REMATCH[1]}"
+  else
+    err '普通备份文件名不合法。'
+    return 1
+  fi
+  [[ "$filename_domain" == "$MIGRATION_SOURCE_DOMAIN" ]] || { err '备份文件名与 manifest 源域名不一致。'; return 1; }
+
+  [[ -f "$package_dir/database/${db_name}.sql.gz" ]] || { err '备份包缺少清单指定的数据库文件。'; return 1; }
+  gzip -t "$package_dir/database/${db_name}.sql.gz" || { err '数据库压缩文件校验失败。'; return 1; }
+  MIGRATION_SOURCE_DB="$db_name"
+
+  for component in nginx certs; do
+    case "$component" in
+      nginx) count="$(manifest_number_once "$manifest" nginx_files)" || return 1; payload="$package_dir/nginx/nginx-files.tar.gz" ;;
+      certs) count="$(manifest_number_once "$manifest" cert_items)" || return 1; payload="$package_dir/certs/cert-items.tar.gz" ;;
+    esac
+    if ((count > 0)); then
+      [[ -f "$payload" ]] || { err "备份清单声明了 $component 载荷，但文件不存在。"; return 1; }
+    fi
+    [[ ! -f "$payload" ]] || tar -tzf "$payload" >/dev/null || { err "备份中的 $component 载荷无法读取。"; return 1; }
+  done
+
+  extract_safe_tar "$package_dir/files/site-files.tar.gz" "$source_site_dir" '站点文件包' yes || return 1
+  wp_config="$(find_wp_config "$source_site_dir")" || { err '备份包中无法唯一确定 WordPress Root。'; return 1; }
+  validate_migration_wp_config "$wp_config" '源站 WordPress 配置' || return 1
+  source_db_name="$(parse_migration_wp_define "$wp_config" DB_NAME)"
+  [[ "$source_db_name" == "$db_name" ]] || { err 'manifest 与源站 WordPress 数据库名称不一致。'; return 1; }
+  MIGRATION_SOURCE_WP_ROOT="$(dirname -- "$wp_config")"
+}
+
+replace_migration_wp_define() {
+  local config="$1" key="$2" replacement_file="$3" output mode
+  mode="$(stat -c '%a' "$config")" || return 1
+  output="$(mktemp "$(dirname -- "$config")/.wp-config.${key}.XXXXXX")" || return 1
+  if ! awk -v key="$key" -v replacement_file="$replacement_file" '
+    BEGIN {
+      if ((getline replacement < replacement_file) <= 0) exit 40
+      close(replacement_file)
+    }
+    $0 ~ "^[[:space:]]*define[[:space:]]*\\([[:space:]]*[\"\047]" key "[\"\047][[:space:]]*," {
+      print replacement
+      replaced++
+      next
+    }
+    { print }
+    END { if (replaced != 1) exit 41 }
+  ' "$config" > "$output"; then
+    rm -f -- "$output"
+    err "暂存 wp-config.php 时无法替换 $key。"
+    return 1
+  fi
+  chmod "$mode" "$output"
+  mv -f -- "$output" "$config"
+}
+
+prepare_migration_stage() {
+  local source_wp_root="$1" target_wp_config="$2" stage_root="$3" key replacement_file staged_config
+  mkdir -p "$stage_root"
+  cp -a -- "$source_wp_root/." "$stage_root/"
+  staged_config="$stage_root/wp-config.php"
+  [[ -f "$staged_config" ]] || { err '暂存 WordPress Root 缺少 wp-config.php。'; return 1; }
+  for key in DB_NAME DB_USER DB_PASSWORD DB_HOST; do
+    replacement_file="$(mktemp "$stage_root/.target-${key}.XXXXXX")" || return 1
+    chmod 0600 "$replacement_file"
+    wp_define_line "$target_wp_config" "$key" > "$replacement_file"
+    replace_migration_wp_define "$staged_config" "$key" "$replacement_file" || { rm -f -- "$replacement_file"; return 1; }
+    rm -f -- "$replacement_file"
+  done
+  validate_migration_wp_config "$staged_config" '暂存 WordPress 配置' || return 1
+  for key in DB_NAME DB_USER DB_PASSWORD DB_HOST; do
+    if [[ "$(parse_migration_wp_define "$staged_config" "$key")" != "$(parse_migration_wp_define "$target_wp_config" "$key")" ]]; then
+      err "暂存 WordPress 配置中的 $key 与目标站点不一致。"
+      return 1
+    fi
+  done
+}
+
+validate_migration_target_scope() {
+  local domain="$1" wp_config="$2" site_root_real target_dir_real wp_config_real wp_root_real expected
+  site_root_real="$(realpath -e -- "$SITE_ROOT")" || { err "无法解析站点目录：$SITE_ROOT"; return 1; }
+  target_dir_real="$(realpath -e -- "$(site_path "$domain")")" || { err '无法解析目标域名目录。'; return 1; }
+  expected="$site_root_real/$domain"
+  [[ "$target_dir_real" == "$expected" ]] || { err '目标域名目录解析结果超出站点目录。'; return 1; }
+  wp_config_real="$(realpath -e -- "$wp_config")" || { err '无法解析目标 wp-config.php。'; return 1; }
+  wp_root_real="$(dirname -- "$wp_config_real")"
+  case "$wp_root_real" in
+    "$target_dir_real"|"$target_dir_real"/*) ;;
+    *) err '目标 WordPress Root 解析结果超出所选域名目录。'; return 1 ;;
+  esac
+  MIGRATION_TARGET_WP_ROOT="$wp_root_real"
+}
+
+verify_empty_target_database() {
+  local tables
+  [[ "$DB_NAME" =~ ^[A-Za-z0-9_-]+$ ]] || { err '目标数据库名称包含不支持的字符。'; return 1; }
+  prepare_db_client mysql || return 1
+  if ! tables="$(run_mysql --batch --skip-column-names -e 'SHOW TABLES' "$DB_NAME")"; then
+    err '无法连接并检查目标数据库。'
+    return 1
+  fi
+  if [[ -n "${tables//[[:space:]]/}" ]]; then
+    err "目标数据库不是空库，检测到数据表：$DB_NAME"
+    return 1
+  fi
+}
+
+extract_nginx_domain_blocks() {
+  local file="$1" domain="$2"
+  awk -v domain="$domain" '
+    function brace_delta(text, copy, opens, closes) {
+      copy=text
+      opens=gsub(/\{/, "{", copy)
+      copy=text
+      closes=gsub(/\}/, "}", copy)
+      return opens - closes
+    }
+    function inspect_server_name(text, directives, directive_count, directive_index, normalized, fields, field_count, field_index) {
+      directive_count=split(text, directives, /;/)
+      for (directive_index=1; directive_index<=directive_count; directive_index++) {
+        normalized=directives[directive_index]
+        gsub(/[{}\t\r]/, " ", normalized)
+        field_count=split(normalized, fields, /[[:space:]]+/)
+        for (field_index=1; field_index<=field_count; field_index++) {
+          if (fields[field_index] == "server_name") {
+            while (++field_index <= field_count && fields[field_index] != "") {
+              if (fields[field_index] == domain) matched=1
+            }
+            break
+          }
+        }
+      }
+    }
+    function emit_block() {
+      if (matched) print block
+      block=""
+      matched=0
+    }
+    {
+      line=$0
+      sub(/#.*/, "", line)
+      if (!inside && line ~ /^[[:space:]]*server[[:space:]]*\{/) {
+        inside=1
+        block=line
+        matched=0
+        inspect_server_name(line)
+        depth=brace_delta(line)
+        if (depth == 0) { emit_block(); inside=0 }
+        next
+      }
+      if (inside) {
+        block=block "\n" line
+        inspect_server_name(line)
+        depth+=brace_delta(line)
+        if (depth == 0) { emit_block(); inside=0 }
+      }
+    }
+    END { if (inside) exit 42 }
+  ' "$file"
+}
+
+detect_target_scheme() {
+  local domain="$1" file blocks config='' has_443=0 has_ssl=0 has_cert=0 has_http=0
+  local nginx_files=()
+  mapfile -t nginx_files < <(find_nginx_files "$domain")
+  ((${#nginx_files[@]} > 0)) || { err "未找到目标域名 Nginx 配置：$domain"; return 1; }
+  for file in "${nginx_files[@]}"; do
+    if ! blocks="$(extract_nginx_domain_blocks "$file" "$domain")"; then
+      err "目标域名的 Nginx server 块无法解析：$file"
+      return 1
+    fi
+    [[ -z "$blocks" ]] || config+="$blocks"$'\n'
+  done
+  [[ -n "$config" ]] || { err "未找到目标域名的有效 Nginx server 块：$domain"; return 1; }
+  grep -Eq '(^|[;{}[:space:]])listen[[:space:]]+([^;[:space:]]*:)?443([[:space:];]|$)' <<< "$config" && has_443=1
+  grep -Eq '(^|[;{}[:space:]])listen[[:space:]]+[^;]*[[:space:]]ssl([[:space:];]|$)' <<< "$config" && has_ssl=1
+  grep -Eq '(^|[;{}[:space:]])ssl_certificate(_key)?[[:space:]]+' <<< "$config" && has_cert=1
+  grep -Eq '(^|[;{}[:space:]])listen[[:space:]]+([^;[:space:]]*:)?80([[:space:];]|$)' <<< "$config" && has_http=1
+  if ((has_443 || has_ssl || has_cert)); then
+    if ((has_443 && has_ssl && has_cert)); then
+      printf 'https'
+      return 0
+    fi
+    err "目标域名的 HTTPS 配置不完整或存在冲突：$domain"
+    return 1
+  fi
+  if ((has_http)); then
+    printf 'http'
+    return 0
+  fi
+  err "无法从 Nginx 配置确定目标协议：$domain"
+  return 1
+}
+
 restore_site() (
   umask 077
   local archive="$1"
@@ -1087,6 +1483,94 @@ snapshots_menu() {
   done
 }
 
+migration_preflight() (
+  umask 077
+  local mode="$1" archive target_domain target_dir target_wp_config target_wp_root target_scheme target_url
+  local tmp='' status=0 target_owner
+  case "$mode" in
+    change-domain|keep-domain) ;;
+    *) err '未知迁移模式。'; return 1 ;;
+  esac
+
+  migration_log_init "$mode"
+  trap '
+    status=$?
+    set +e
+    if [[ -n "$tmp" && -d "$tmp" ]]; then
+      rm -rf -- "$tmp"
+      migration_log INFO "已清理本次迁移临时目录。"
+    fi
+    migration_log_finish "$status"
+  ' EXIT
+
+  migration_log INFO '阶段二只执行只读预检和临时暂存，不修改目标站点或数据库。'
+  need_cmd tar gzip awk sed grep find cut realpath readlink dirname stat cp mv chmod mktemp
+  archive="$(select_backup '' backup 迁移)" || {
+    migration_log INFO '用户取消了备份选择。'
+    return 0
+  }
+  migration_log INFO "已选择普通备份：${archive##*/}"
+
+  [[ -d "$MIGRATION_TMP_ROOT" ]] || { err "迁移临时目录根路径不存在：$MIGRATION_TMP_ROOT"; migration_log ERROR '迁移临时目录根路径不存在。'; return 1; }
+  tmp="$(mktemp -d "$MIGRATION_TMP_ROOT/sitebak.migrate.XXXXXX")"
+  chmod 0700 "$tmp"
+  if ! inspect_migration_archive "$archive" "$tmp/package" "$tmp/source-site"; then
+    migration_log ERROR '普通备份结构或内容预检失败。'
+    return 1
+  fi
+  migration_log INFO "备份预检通过；源域名=$MIGRATION_SOURCE_DOMAIN；源数据库=$MIGRATION_SOURCE_DB"
+
+  target_domain="$(select_existing_domain '请选择已预建的空 WordPress 目标站点')" || {
+    migration_log INFO '用户取消了目标站点选择。'
+    return 0
+  }
+  case "$mode" in
+    change-domain)
+      [[ "$target_domain" != "$MIGRATION_SOURCE_DOMAIN" ]] || { err '更换域名迁移要求源域名与目标域名不同。'; migration_log ERROR '源域名与目标域名相同。'; return 1; }
+      ;;
+    keep-domain)
+      [[ "$target_domain" == "$MIGRATION_SOURCE_DOMAIN" ]] || { err '保留域名迁移要求源域名与目标域名完全一致。'; migration_log ERROR '源域名与目标域名不一致。'; return 1; }
+      ;;
+  esac
+
+  target_dir="$(site_path "$target_domain")"
+  target_wp_config="$(find_wp_config "$target_dir")" || { err '无法唯一确定目标 WordPress Root。'; migration_log ERROR '目标 WordPress Root 不唯一。'; return 1; }
+  validate_migration_target_scope "$target_domain" "$target_wp_config" || { migration_log ERROR '目标 WordPress Root 路径范围检查失败。'; return 1; }
+  target_wp_root="$MIGRATION_TARGET_WP_ROOT"
+  read_migration_db_config_file "$target_wp_config" || { migration_log ERROR '无法读取目标数据库配置。'; return 1; }
+  verify_empty_target_database || { migration_log ERROR "目标数据库空库检查失败；目标数据库=$DB_NAME"; return 1; }
+  migration_log INFO "目标数据库连接与空库检查通过；目标数据库=$DB_NAME"
+
+  target_scheme="$(detect_target_scheme "$target_domain")" || { migration_log ERROR '目标 Nginx 协议检查失败。'; return 1; }
+  target_url="${target_scheme}://${target_domain}"
+  target_owner="$(stat -c '%u:%g' "$target_wp_root")" || { err '无法读取目标 WordPress Root 属主。'; migration_log ERROR '目标属主检查失败。'; return 1; }
+
+  prepare_migration_stage "$MIGRATION_SOURCE_WP_ROOT" "$target_wp_config" "$tmp/staged-wordpress" || {
+    migration_log ERROR 'WordPress Root 暂存构建失败。'
+    return 1
+  }
+  [[ "$(parse_migration_wp_define "$tmp/staged-wordpress/wp-config.php" DB_NAME)" == "$DB_NAME" ]] || {
+    err '暂存 WordPress 配置未正确使用目标数据库。'
+    migration_log ERROR '暂存配置目标数据库复核失败。'
+    return 1
+  }
+
+  migration_log INFO "目标预检通过；目标域名=$target_domain；目标协议=$target_scheme；目标属主=$target_owner"
+  migration_log INFO '阶段二暂存构建完成；没有导入数据库或替换目标文件。'
+  header
+  printf '%s迁移预检结果%s\n\n' "$BOLD" "$RESET"
+  printf '%s迁移模式：%s%s%s\n' "$NUMBER" "$BLUE" "$mode" "$RESET"
+  printf '%s普通备份：%s%s%s\n' "$NUMBER" "$BLUE" "${archive##*/}" "$RESET"
+  printf '%s源域名：%s%s%s\n' "$NUMBER" "$BLUE" "$MIGRATION_SOURCE_DOMAIN" "$RESET"
+  printf '%s目标域名：%s%s%s\n' "$NUMBER" "$BLUE" "$target_domain" "$RESET"
+  printf '%s目标 WordPress Root：%s%s%s\n' "$NUMBER" "$BLUE" "$target_wp_root" "$RESET"
+  printf '%s目标数据库：%s%s%s\n' "$NUMBER" "$BLUE" "$DB_NAME" "$RESET"
+  printf '%s目标网址：%s%s%s\n\n' "$NUMBER" "$BLUE" "$target_url" "$RESET"
+  ok '阶段二预检和临时暂存已通过。'
+  warn '当前阶段未导入数据库、未替换目标文件，也未修改 Nginx 或 SSL。'
+  ok "迁移日志已保存：$MIGRATION_LOG_FILE"
+)
+
 migration_menu() {
   local choice
   while true; do
@@ -1095,8 +1579,8 @@ migration_menu() {
     ui_prompt '请输入你的选择：'
     ui_read choice || return 0
     case "$choice" in
-      1) run_menu_action migration_not_implemented change-domain ;;
-      2) run_menu_action migration_not_implemented keep-domain ;;
+      1) run_menu_action migration_preflight change-domain ;;
+      2) run_menu_action migration_preflight keep-domain ;;
       3) run_menu_action show_recent_migration_log ;;
       0) return 0 ;;
       *) warn '无效的选择，请输入 0 至 3。' ;;
@@ -1150,6 +1634,7 @@ $APP_NAME v$VERSION
   SITEBAK_UPDATE_URL     默认 GitHub raw 地址
   SITEBAK_DB_CONTAINER   可选，指定数据库容器名称
   SITEBAK_MIGRATION_LOG_DIR  默认 /var/log/sitebak
+  SITEBAK_MIGRATION_TMP_ROOT 默认 /tmp
   NO_COLOR              设置后关闭彩色输出
 EOF
 }
