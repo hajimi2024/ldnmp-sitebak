@@ -9,6 +9,10 @@ export SITEBAK_INSTALL_PATH="$fixture/kk"
 export MOCK_DOWNLOAD=ok
 curl() {
   local output=''
+  if [[ " $* " == *'https://api.github.com/repos/hajimi2024/ldnmp-sitebak/commits/main?'* ]]; then
+    printf '  "sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",\n'
+    return 0
+  fi
   while (($#)); do
     [[ $1 != -o ]] || { output=$2; break; }
     shift

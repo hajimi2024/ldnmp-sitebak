@@ -4,11 +4,6 @@ set -Eeuo pipefail
 INSTALL_PATH="${SITEBAK_INSTALL_PATH:-/usr/local/bin/kk}"
 DOWNLOAD_URL="${SITEBAK_UPDATE_URL:-https://raw.githubusercontent.com/hajimi2024/ldnmp-sitebak/main/sitebak.sh}"
 REQUEST_URL="$DOWNLOAD_URL"
-if [[ "$REQUEST_URL" == https://raw.githubusercontent.com/* ]]; then
-  separator='?'
-  [[ "$REQUEST_URL" != *\?* ]] || separator='&'
-  REQUEST_URL="${REQUEST_URL}${separator}sitebak_nocache=$(date +%s)"
-fi
 download=''
 staged=''
 YELLOW=''
@@ -37,12 +32,23 @@ if ((EUID != 0)); then
   exit 1
 fi
 
-for dependency in curl bash grep date mktemp install mv rm; do
+for dependency in curl bash grep date sed head mktemp install mv rm; do
   command -v "$dependency" >/dev/null 2>&1 || {
     printf '缺少安装所需命令：%s\n' "$dependency" >&2
     exit 1
   }
 done
+
+if [[ "$DOWNLOAD_URL" == 'https://raw.githubusercontent.com/hajimi2024/ldnmp-sitebak/main/sitebak.sh' ]]; then
+  api_response="$(curl -fsSL --connect-timeout 15 --max-time 120 -H 'Accept: application/vnd.github+json' \
+    "https://api.github.com/repos/hajimi2024/ldnmp-sitebak/commits/main?sitebak_nocache=$(date +%s)")"
+  latest_commit="$(sed -n 's/^[[:space:]]*"sha":[[:space:]]*"\([0-9a-f]\{40\}\)",[[:space:]]*$/\1/p' <<< "$api_response" | head -n 1)"
+  if [[ ! "$latest_commit" =~ ^[0-9a-f]{40}$ ]]; then
+    printf '无法确认 GitHub main 最新提交，安装已停止。\n' >&2
+    exit 1
+  fi
+  REQUEST_URL="https://raw.githubusercontent.com/hajimi2024/ldnmp-sitebak/${latest_commit}/sitebak.sh"
+fi
 
 download="$(mktemp)"
 curl -fsSL --connect-timeout 15 --max-time 120 "$REQUEST_URL" -o "$download"

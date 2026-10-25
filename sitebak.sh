@@ -890,13 +890,17 @@ run_menu_action() {
   return_to_menu
 }
 
-update_request_url() {
-  local request_url="$UPDATE_URL" separator='?'
-  if [[ "$request_url" == https://raw.githubusercontent.com/* ]]; then
-    [[ "$request_url" != *\?* ]] || separator='&'
-    request_url="${request_url}${separator}sitebak_nocache=$(date +%s)"
+resolve_update_url() {
+  local api_url api_response latest_commit
+  if [[ "$UPDATE_URL" == 'https://raw.githubusercontent.com/hajimi2024/ldnmp-sitebak/main/sitebak.sh' ]]; then
+    api_url="https://api.github.com/repos/hajimi2024/ldnmp-sitebak/commits/main?sitebak_nocache=$(date +%s)"
+    api_response="$(curl -fsSL --connect-timeout 15 --max-time 120 -H 'Accept: application/vnd.github+json' "$api_url")" || return 1
+    latest_commit="$(sed -n 's/^[[:space:]]*"sha":[[:space:]]*"\([0-9a-f]\{40\}\)",[[:space:]]*$/\1/p' <<< "$api_response" | head -n 1)"
+    [[ "$latest_commit" =~ ^[0-9a-f]{40}$ ]] || return 1
+    printf 'https://raw.githubusercontent.com/hajimi2024/ldnmp-sitebak/%s/sitebak.sh' "$latest_commit"
+  else
+    printf '%s' "$UPDATE_URL"
   fi
-  printf '%s' "$request_url"
 }
 
 update_self() {
@@ -904,7 +908,11 @@ update_self() {
   info "正在从 GitHub 更新脚本..."
   local tmp request_url downloaded_version
   tmp="$(mktemp)"
-  request_url="$(update_request_url)"
+  if ! request_url="$(resolve_update_url)"; then
+    rm -f "$tmp"
+    err "无法确认 GitHub main 最新提交，当前脚本未更新。"
+    return 1
+  fi
   if ! curl -fsSL --connect-timeout 15 --max-time 120 "$request_url" -o "$tmp"; then
     rm -f "$tmp"
     err "下载失败，当前脚本未更新。请检查网络后重试。"
