@@ -2,7 +2,7 @@
 
 set -Eeuo pipefail
 
-VERSION="0.3.1"
+VERSION="0.3.2"
 APP_NAME="LDNMP 单站备份恢复工具"
 
 WEB_ROOT="${SITEBAK_WEB_ROOT:-/home/web}"
@@ -34,10 +34,11 @@ CYAN=$'\033[0;36m'
 NUMBER=$'\033[1;33m'
 BOLD=$'\033[1;96m'
 RESET=$'\033[0m'
+NO_UNDERLINE=$'\033[24m'
 LINK_OPEN=''
 LINK_CLOSE=''
 if [[ ${TERM:-} == dumb || -n ${NO_COLOR+x} ]] || [[ ! -t 1 && ! -t 2 ]]; then
-  RED='' GREEN='' LIGHT_GREEN='' YELLOW='' BLUE='' CYAN='' NUMBER='' BOLD='' RESET=''
+  RED='' GREEN='' LIGHT_GREEN='' YELLOW='' BLUE='' CYAN='' NUMBER='' BOLD='' RESET='' NO_UNDERLINE=''
 else
   LINK_OPEN=$'\033]8;;'"$PROJECT_URL"$'\033\\'
   LINK_CLOSE=$'\033]8;;\033\\'
@@ -176,7 +177,7 @@ EOF
   printf '%s站点目录：%s%s%s\n' "$NUMBER" "$LIGHT_GREEN" "$SITE_ROOT" "$RESET"
   printf '%s备份目录：%s%s%s\n' "$NUMBER" "$LIGHT_GREEN" "$BACKUP_DIR" "$RESET"
   printf '%s快照目录：%s%s%s  -  %s备注：%ssnapshot%s\n' "$NUMBER" "$LIGHT_GREEN" "$BACKUP_DIR" "$RESET" "$NUMBER" "$LIGHT_GREEN" "$RESET"
-  printf '%sGitHub：%s%s%s%s%s\n\n' "$NUMBER" "$LIGHT_GREEN" "$LINK_OPEN" "$PROJECT_URL" "$LINK_CLOSE" "$RESET"
+  printf '%sGitHub：%s%s%s%s%s%s\n\n' "$NUMBER" "$LIGHT_GREEN" "$NO_UNDERLINE" "$LINK_OPEN" "$PROJECT_URL" "$LINK_CLOSE" "$RESET"
 }
 
 valid_domain() {
