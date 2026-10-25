@@ -78,8 +78,9 @@ for value in ['0.2.8', fixture + '/html', fixture + '/backups', 'snapshot']:
 for code, message in [('96', '[INFO] Reading files'), ('32', '[OK] Completed'),
                       ('33', '[WARN] Overwrite confirmation'), ('31', '[ERROR] Failed')]:
     assert '\x1b[0;' + code + 'm' + message + '\x1b[0m' in colored
-divider_count = colored.count('\x1b[0;36m' + '-' * 38 + '\x1b[0m\n')
+divider_count = colored.count('\x1b[1;96m' + '-' * 38 + '\x1b[0m\n')
 assert divider_count >= 2 and divider_count % 2 == 0
+assert '\x1b[1;96m        单站备份恢复工具\x1b[0m\n' in colored
 assert '\x1b[0;33m请输入 yes 确认删除：\x1b[0m' in colored
 assert run(terminal=True, NO_COLOR='1') == plain
 assert run(terminal=True, TERM='dumb') == plain

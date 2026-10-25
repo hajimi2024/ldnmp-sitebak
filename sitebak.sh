@@ -149,11 +149,11 @@ header() {
 | |___ | |_| || |\  | | |  | | |  __/
 |_____||____/ |_| \_| |_|  |_| |_|
 EOF
-    printf '%s%s%s\n' "$CYAN" '--------------------------------------' "$RESET"
-    printf '%s        单站备份恢复工具%s\n' "$CYAN" "$RESET"
-    printf '%s%s%s\n' "$CYAN" '--------------------------------------' "$RESET"
+    printf '%s%s%s\n' "$BOLD" '--------------------------------------' "$RESET"
+    printf '%s        单站备份恢复工具%s\n' "$BOLD" "$RESET"
+    printf '%s%s%s\n' "$BOLD" '--------------------------------------' "$RESET"
   else
-    printf 'LDNMP\n%s----------------\n%s单站备份恢复工具%s\n%s----------------%s\n' "$CYAN" "$BLUE" "$RESET" "$CYAN" "$RESET"
+    printf 'LDNMP\n%s----------------\n单站备份恢复工具\n----------------%s\n' "$BOLD" "$RESET"
   fi
   printf '\n%s版本：%s%s%s\n' "$NUMBER" "$LIGHT_GREEN" "$VERSION" "$RESET"
   printf '%s站点目录：%s%s%s\n' "$NUMBER" "$LIGHT_GREEN" "$SITE_ROOT" "$RESET"
