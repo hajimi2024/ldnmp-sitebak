@@ -26,8 +26,10 @@ ok 'Completed'
 warn 'Overwrite confirmation'
 err 'Failed'
 ui_prompt '请输入你的选择：'
+ui_read prompt_choice < <(printf '7\n')
 printf '\n'
-ui_prompt '请输入 yes 确认删除：' "$NUMBER"
+ui_prompt '请输入 yes 确认删除：'
+ui_read prompt_confirm < <(printf 'yes\n')
 printf '\n'
 site="$(select_domain < <(printf '1\n'))"
 printf '\nSELECTED_SITE:%s\n' "$site"
@@ -73,7 +75,7 @@ for number in range(8):
     assert '\x1b[1;33m%d.\x1b[0;96m' % number in colored
 for label in ['版本：', '站点目录：', '备份目录：', '快照目录：', '备注：']:
     assert '\x1b[1;33m' + label + '\x1b[0;92m' in colored
-for value in ['0.2.8', fixture + '/html', fixture + '/backups', 'snapshot']:
+for value in ['0.3.0', fixture + '/html', fixture + '/backups', 'snapshot']:
     assert '\x1b[0;92m' + value + '\x1b[0m' in colored
 for code, message in [('96', '[INFO] Reading files'), ('32', '[OK] Completed'),
                       ('33', '[WARN] Overwrite confirmation'), ('31', '[ERROR] Failed')]:
@@ -82,7 +84,7 @@ divider_count = colored.count('\x1b[1;96m' + '-' * 38 + '\x1b[0m\n')
 assert divider_count >= 2 and divider_count % 2 == 0
 assert '\x1b[1;96m        单站备份恢复工具\x1b[0m\n' in colored
 for prompt in ['请输入你的选择：', '请输入 yes 确认删除：']:
-    assert '\x1b[1;33m' + prompt + '\x1b[0m' in colored
+    assert '\x1b[1;96m' + prompt + '\x1b[1;33m\x1b[0m' in colored
 assert run(terminal=True, NO_COLOR='1') == plain
 assert run(terminal=True, TERM='dumb') == plain
 assert '\nSELECTED_SITE:example.com\n' in colored
