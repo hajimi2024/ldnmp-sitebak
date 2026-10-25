@@ -21,6 +21,7 @@ clear_screen() { :; }
 header
 render_main_menu
 render_snapshot_menu
+render_migration_menu
 info 'Reading files'
 ok 'Completed'
 warn 'Overwrite confirmation'
@@ -71,11 +72,11 @@ plain = run()
 colored = run(terminal=True)
 assert '\x1b' not in plain
 assert ansi.sub('', colored).rstrip('\n') == plain.rstrip('\n')
-for number in range(8):
+for number in range(9):
     assert '\x1b[1;33m%d.\x1b[0;96m' % number in colored
 for label in ['版本：', '站点目录：', '备份目录：', '快照目录：', '备注：']:
     assert '\x1b[1;33m' + label + '\x1b[0;92m' in colored
-for value in ['0.3.4', fixture + '/html', fixture + '/backups', 'snapshot']:
+for value in ['0.3.5', fixture + '/html', fixture + '/backups', 'snapshot']:
     assert '\x1b[0;92m' + value + '\x1b[0m' in colored
 project_url = 'https://github.com/hajimi2024/ldnmp-sitebak'
 assert '\x1b[1;33mGitHub：\x1b[0;96m' in colored
@@ -104,5 +105,6 @@ narrow = ansi.sub('', run(terminal=True, COLUMNS='32'))
 assert '\nLDNMP\n----------------\n单站备份恢复工具\n----------------\n' in narrow
 assert '1.  列出 WordPress 站点\n2.  备份单个站点' in narrow
 assert '2.  备份单个站点\n\n3.  查看备份文件' in narrow
+assert '8.  站点迁移 ♻️' in narrow
 PY
 printf 'PASS: terminal colors, resets, plain-output fallback, column alignment and clean selection values\n'

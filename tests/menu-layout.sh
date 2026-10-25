@@ -6,6 +6,7 @@ trap 'rm -rf -- "$fixture"' EXIT
 
 COLUMNS=80 render_main_menu > "$fixture/main-wide"
 COLUMNS=80 render_snapshot_menu > "$fixture/snapshots-wide"
+COLUMNS=80 render_migration_menu > "$fixture/migration-wide"
 COLUMNS=57 render_main_menu > "$fixture/main-narrow"
 
 # Exercise the real menu dispatch without running backup, restore or deletion.
@@ -21,7 +22,8 @@ COLUMNS=57 render_main_menu > "$fixture/main-narrow"
   snapshots_menu() { printf '\nACTION:snapshots\n'; }
   delete_backup_menu() { [[ ${1:-} == backup ]]; printf '\nACTION:delete\n'; }
   update_and_reload() { printf '\nACTION:update\n'; }
-  main_menu < <(printf '%s\n' 1 2 3 4 5 6 7 0)
+  migration_menu() { printf '\nACTION:migration\n'; }
+  main_menu < <(printf '%s\n' 1 2 3 4 5 6 7 8 0)
 ) > "$fixture/routing"
 
 python3 - "$fixture" <<'PY'
@@ -38,9 +40,9 @@ def read_plain(name):
 def width(text):
     return sum(2 if unicodedata.east_asian_width(c) in 'WF' else 1 for c in text)
 
-def assert_layout(name, pairs):
+def assert_layout(name, pairs, separator_count=3):
     lines = read_plain(name).splitlines()
-    assert lines.count('-' * 24) == 3, lines
+    assert lines.count('-' * 24) == separator_count, lines
     for index, (left, right) in enumerate(pairs):
         row_index = next(index for index, line in enumerate(lines) if line.startswith(left))
         line = lines[row_index]
@@ -53,21 +55,34 @@ assert_layout('main-wide', [
     ('1.  列出 WordPress 站点', '2.  备份单个站点'),
     ('3.  查看备份文件', '4.  恢复单个站点'),
     ('5.  快照管理', '6.  删除旧备份'),
-])
+], separator_count=4)
 assert_layout('snapshots-wide', [
     ('1.  创建完整快照', '2.  查看快照'),
     ('3.  恢复完整快照', '4.  删除快照'),
 ])
 
+main = read_plain('main-wide').splitlines()
+assert main.count('-' * 24) == 4, main
+assert main[-4:] == ['8.  站点迁移 ♻️', '-' * 24, '0.  退出', '-' * 24], main
+
+migration = read_plain('migration-wide').splitlines()
+assert migration == [
+    '站点迁移', '-' * 24,
+    '1.  更换域名迁移', '2.  保留域名迁移', '3.  查看最近一次迁移日志', '',
+    '0.  返回上一级', '-' * 24,
+], migration
+
 narrow = read_plain('main-narrow')
 assert '1.  列出 WordPress 站点\n2.  备份单个站点' in narrow
 assert '2.  备份单个站点\n\n3.  查看备份文件' in narrow
 assert '7.  更新脚本\n' in narrow
+assert ('7.  更新脚本\n' + '-' * 24 + '\n8.  站点迁移 ♻️\n' +
+        '-' * 24 + '\n0.  退出') in narrow
 assert '                 2.  备份单个站点' not in narrow
 
 actions = [line[len('ACTION:'):] for line in
            (root / 'routing').read_text().splitlines() if line.startswith('ACTION:')]
-assert actions == ['sites', 'backup', 'list-backups', 'restore', 'snapshots', 'delete', 'update'], actions
+assert actions == ['sites', 'backup', 'list-backups', 'restore', 'snapshots', 'delete', 'update', 'migration'], actions
 PY
 
 printf 'PASS: fixed menu order, action routing, two-column layout and narrow-terminal fallback\n'

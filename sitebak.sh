@@ -2,7 +2,7 @@
 
 set -Eeuo pipefail
 
-VERSION="0.3.4"
+VERSION="0.3.5"
 APP_NAME="LDNMP 单站备份恢复工具"
 
 WEB_ROOT="${SITEBAK_WEB_ROOT:-/home/web}"
@@ -11,6 +11,8 @@ BACKUP_DIR="${SITEBAK_BACKUP_DIR:-/home}"
 INSTALL_PATH="${SITEBAK_INSTALL_PATH:-/usr/local/bin/kk}"
 UPDATE_URL="${SITEBAK_UPDATE_URL:-https://raw.githubusercontent.com/hajimi2024/ldnmp-sitebak/main/sitebak.sh}"
 PROJECT_URL="https://github.com/hajimi2024/ldnmp-sitebak"
+MIGRATION_LOG_DIR="${SITEBAK_MIGRATION_LOG_DIR:-/var/log/sitebak}"
+MIGRATION_LOG_FILE=''
 
 NGINX_CONF_DIRS=(
   "$WEB_ROOT/conf.d"
@@ -49,6 +51,77 @@ ok() { printf '%s[OK] %s%s\n' "$GREEN" "$*" "$RESET"; }
 warn() { printf '%s[WARN] %s%s\n' "$YELLOW" "$*" "$RESET"; }
 err() { printf '%s[ERROR] %s%s\n' "$RED" "$*" "$RESET" >&2; }
 ui_prompt() { printf '%s%s%s' "$BOLD" "$1" "$NUMBER"; }
+
+sanitize_migration_log_text() {
+  sed -E \
+    -e 's/((DB_)?PASSWORD|PASSWD|TOKEN|SECRET|PRIVATE_KEY|API_KEY)([[:space:]]*[:=][[:space:]]*)[^[:space:]]+/\1\3[REDACTED]/Ig' \
+    -e 's/([[:space:]]--?password=)[^[:space:]]+/\1[REDACTED]/Ig' \
+    -e 's#(mysql://[^:/@[:space:]]+:)[^@[:space:]]+@#\1[REDACTED]@#Ig'
+}
+
+migration_log_init() {
+  local mode="${1:-migration}" stamp old_umask created
+  need_cmd install mktemp chmod date sed
+  install -d -m 0700 "$MIGRATION_LOG_DIR"
+  chmod 0700 "$MIGRATION_LOG_DIR"
+  stamp="$(date +'%Y%m%d_%H%M%S')"
+  old_umask="$(umask)"
+  umask 077
+  if ! created="$(mktemp "$MIGRATION_LOG_DIR/migration_${mode}_${stamp}.XXXXXX.log")"; then
+    umask "$old_umask"
+    err "无法创建迁移日志：$MIGRATION_LOG_DIR"
+    return 1
+  fi
+  umask "$old_umask"
+  chmod 0600 "$created"
+  MIGRATION_LOG_FILE="$created"
+  migration_log INFO "迁移任务已创建；模式=$mode"
+}
+
+migration_log() {
+  local level="${1:-INFO}" safe_text
+  shift || true
+  [[ -n "$MIGRATION_LOG_FILE" ]] || { err '迁移日志尚未初始化。'; return 1; }
+  safe_text="$(printf '%s' "$*" | sanitize_migration_log_text)"
+  printf '%s [%s] %s\n' "$(date -Iseconds)" "$level" "$safe_text" >> "$MIGRATION_LOG_FILE"
+}
+
+migration_log_finish() {
+  local status="${1:-0}"
+  migration_log INFO "迁移任务结束；退出状态=$status"
+}
+
+show_recent_migration_log() {
+  local file latest='' modified latest_modified=''
+  need_cmd find stat cat
+  if [[ ! -d "$MIGRATION_LOG_DIR" ]]; then
+    warn '尚无迁移日志。'
+    return 0
+  fi
+  while IFS= read -r -d '' file; do
+    modified="$(stat -c '%y' "$file")" || continue
+    if [[ -z "$latest_modified" || "$modified" > "$latest_modified" ]]; then
+      latest="$file"
+      latest_modified="$modified"
+    fi
+  done < <(find "$MIGRATION_LOG_DIR" -maxdepth 1 -type f -name 'migration_*.log' -print0 2>/dev/null)
+  if [[ -z "$latest" ]]; then
+    warn '尚无迁移日志。'
+    return 0
+  fi
+  info "最近一次迁移日志：$latest"
+  printf '\n'
+  cat -- "$latest"
+}
+
+migration_not_implemented() {
+  local mode="$1"
+  migration_log_init "$mode"
+  migration_log WARN '阶段一仅提供菜单、入口和日志框架；未修改网站或数据库。'
+  warn '站点迁移功能尚未实现；本次未修改网站或数据库。'
+  ok "迁移日志已保存：$MIGRATION_LOG_FILE"
+  migration_log_finish 0
+}
 
 ui_read() {
   local variable="$1" output_fd="${2:-1}" status
@@ -141,6 +214,8 @@ render_main_menu() {
   menu_row_gap
   menu_pair '7.  更新脚本' '' 12
   menu_separator
+  menu_item '8.  站点迁移 ♻️'; printf '\n'
+  menu_separator
   menu_item '0.  退出'; printf '\n'
   menu_separator
 }
@@ -152,6 +227,17 @@ render_snapshot_menu() {
   menu_row_gap
   menu_pair '3.  恢复完整快照' '4.  删除快照' 16
   menu_separator
+  menu_item '0.  返回上一级'; printf '\n'
+  menu_separator
+}
+
+render_migration_menu() {
+  printf '%s站点迁移%s\n' "$BOLD" "$RESET"
+  menu_separator
+  menu_item '1.  更换域名迁移'; printf '\n'
+  menu_item '2.  保留域名迁移'; printf '\n'
+  menu_item '3.  查看最近一次迁移日志'; printf '\n'
+  printf '\n'
   menu_item '0.  返回上一级'; printf '\n'
   menu_separator
 }
@@ -1001,6 +1087,23 @@ snapshots_menu() {
   done
 }
 
+migration_menu() {
+  local choice
+  while true; do
+    header
+    render_migration_menu
+    ui_prompt '请输入你的选择：'
+    ui_read choice || return 0
+    case "$choice" in
+      1) run_menu_action migration_not_implemented change-domain ;;
+      2) run_menu_action migration_not_implemented keep-domain ;;
+      3) run_menu_action show_recent_migration_log ;;
+      0) return 0 ;;
+      *) warn '无效的选择，请输入 0 至 3。' ;;
+    esac
+  done
+}
+
 main_menu() {
   need_root
   while true; do
@@ -1016,6 +1119,7 @@ main_menu() {
       5) snapshots_menu ;;
       6) run_menu_action delete_backup_menu backup ;;
       7) update_and_reload ;;
+      8) migration_menu ;;
       0) exit 0 ;;
       *) warn "无效的选择，请重试。"; sleep 1 ;;
     esac
@@ -1036,6 +1140,7 @@ $APP_NAME v$VERSION
   kk snapshot example.com
   kk list-snapshots [example.com]
   kk restore-snapshot example.com
+  kk migrate
   kk update
 
 环境变量：
@@ -1044,6 +1149,7 @@ $APP_NAME v$VERSION
   SITEBAK_BACKUP_DIR     默认 /home
   SITEBAK_UPDATE_URL     默认 GitHub raw 地址
   SITEBAK_DB_CONTAINER   可选，指定数据库容器名称
+  SITEBAK_MIGRATION_LOG_DIR  默认 /var/log/sitebak
   NO_COLOR              设置后关闭彩色输出
 EOF
 }
@@ -1095,6 +1201,10 @@ main() {
         archive="$(select_backup "$domain" snapshot)" || exit 1
       fi
       restore_site "$archive" snapshot
+      ;;
+    migrate)
+      need_root
+      migration_menu
       ;;
     update)
       need_root
