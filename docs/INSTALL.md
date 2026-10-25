@@ -10,7 +10,7 @@ v0.1.2 起，快捷命令为 `kk`。已安装旧版的用户也请执行下方�
 ## 首次安装
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/hajimi2024/ldnmp-sitebak/main/install.sh || printf 'exit 1\n')
+bash <(curl -fsSL "https://raw.githubusercontent.com/hajimi2024/ldnmp-sitebak/main/install.sh?sitebak_nocache=$(date +%s)" || printf 'exit 1\n')
 ```
 
 在 Linux VPS 的 root 终端中执行（Bash）。安装成功输出“安装成功，输入 kk 进入菜单。”；
@@ -37,6 +37,8 @@ kk update
 ```text
 7.  更新脚本
 ```
+
+菜单更新会绕过 GitHub Raw 缓存并校验下载到的版本；安全替换成功后自动载入新版菜单。失败时保留原脚本并返回当前菜单。
 
 ## 卸载
 

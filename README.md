@@ -21,7 +21,7 @@
 ## 首次安装
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/hajimi2024/ldnmp-sitebak/main/install.sh || printf 'exit 1\n')
+bash <(curl -fsSL "https://raw.githubusercontent.com/hajimi2024/ldnmp-sitebak/main/install.sh?sitebak_nocache=$(date +%s)" || printf 'exit 1\n')
 ```
 
 在 Linux VPS 的 root 终端执行。安装器会以加粗黄色明确显示成功或失败，并与上方输出隔开；校验或安装失败时保留已安装的脚本。若最前面的安装器下载失败，`curl` 会直接报错并返回非零状态。
@@ -57,6 +57,8 @@ kk restore /home/example.com_20260912_153000.tar.gz
 ```bash
 kk update
 ```
+
+交互菜单选择 `7. 更新脚本` 后会绕过 GitHub Raw 缓存下载、校验并安全替换脚本，成功后自动载入新版菜单。
 
 ## 默认路径
 
@@ -103,6 +105,8 @@ SITEBAK_BACKUP_DIR=/root/backups kk backup example.com
 默认备份目录是 `/home`；如使用 `SITEBAK_BACKUP_DIR` 覆盖，压缩包会保存到指定目录。内部临时文件不会作为独立备份文件长期保留。
 
 ## 注意事项
+
+- v0.3.4：菜单更新自动绕过 GitHub Raw 缓存并校验下载版本；替换成功后直接重新载入新版菜单，无需手动退出再输入 `kk`。
 
 - v0.3.3：首页 GitHub 网址改为与 LDNMP 标题同色系的细体亮蓝色，黄色标签、可点击链接和无下划线保持不变。
 

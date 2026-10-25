@@ -20,7 +20,7 @@ COLUMNS=57 render_main_menu > "$fixture/main-narrow"
   restore_menu() { printf '\nACTION:restore\n'; }
   snapshots_menu() { printf '\nACTION:snapshots\n'; }
   delete_backup_menu() { [[ ${1:-} == backup ]]; printf '\nACTION:delete\n'; }
-  update_self() { printf '\nACTION:update\n'; }
+  update_and_reload() { printf '\nACTION:update\n'; }
   main_menu < <(printf '%s\n' 1 2 3 4 5 6 7 0)
 ) > "$fixture/routing"
 

@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 source "$(dirname "$0")/../sitebak.sh"
+project="$(cd "$(dirname "$0")/.." && pwd)"
 fixture="$(mktemp -d)"
 trap 'rm -rf -- "$fixture"' EXIT
 clear_screen() { :; }
@@ -32,12 +33,21 @@ run_menu_action update_self < <(printf '0\n') >> "$fixture/output" 2>&1
 [[ $(< "$INSTALL_PATH") == 'old script' ]]
 curl() {
   local output
+  printf '%s\n' "$@" > "$fixture/curl-args"
   while (($#)); do
     if [[ $1 == -o ]]; then output=$2; break; fi
     shift
   done
-  printf '#!/bin/bash\nprintf updated\n' > "$output"
+  cp "$project/sitebak.sh" "$output"
 }
 run_menu_action update_self < <(printf '0\n') >> "$fixture/output" 2>&1
-[[ -x "$INSTALL_PATH" && $(bash "$INSTALL_PATH") == updated ]]
-printf 'PASS: dependency exit, fail-fast, invalid input, menu return, failed and successful update\n'
+[[ -x "$INSTALL_PATH" ]]
+grep -q '^VERSION="0.3.4"$' "$INSTALL_PATH"
+grep -Eq 'sitebak\.sh\?sitebak_nocache=[0-9]+' "$fixture/curl-args"
+grep -q '版本 0.3.4' "$fixture/output"
+
+exec() { printf '%s\n' "$1" > "$fixture/reloaded"; }
+update_and_reload > "$fixture/reload-output" 2>&1
+[[ $(< "$fixture/reloaded") == "$INSTALL_PATH" ]]
+grep -q '正在自动载入新版菜单' "$fixture/reload-output"
+printf 'PASS: dependency exit, fail-fast, cache bypass, version validation, menu return and automatic reload\n'

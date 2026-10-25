@@ -2,7 +2,7 @@
 
 set -Eeuo pipefail
 
-VERSION="0.3.3"
+VERSION="0.3.4"
 APP_NAME="LDNMP 单站备份恢复工具"
 
 WEB_ROOT="${SITEBAK_WEB_ROOT:-/home/web}"
@@ -890,19 +890,30 @@ run_menu_action() {
   return_to_menu
 }
 
+update_request_url() {
+  local request_url="$UPDATE_URL" separator='?'
+  if [[ "$request_url" == https://raw.githubusercontent.com/* ]]; then
+    [[ "$request_url" != *\?* ]] || separator='&'
+    request_url="${request_url}${separator}sitebak_nocache=$(date +%s)"
+  fi
+  printf '%s' "$request_url"
+}
+
 update_self() {
-  need_cmd curl
+  need_cmd curl date sed head grep bash install mv mktemp rm
   info "正在从 GitHub 更新脚本..."
-  local tmp
+  local tmp request_url downloaded_version
   tmp="$(mktemp)"
-  if ! curl -fsSL --connect-timeout 15 --max-time 120 "$UPDATE_URL" -o "$tmp"; then
+  request_url="$(update_request_url)"
+  if ! curl -fsSL --connect-timeout 15 --max-time 120 "$request_url" -o "$tmp"; then
     rm -f "$tmp"
     err "下载失败，当前脚本未更新。请检查网络后重试。"
     return 1
   fi
-  if [[ ! -s "$tmp" ]] || ! bash -n "$tmp"; then
+  downloaded_version="$(sed -n 's/^VERSION="\([^"]*\)"/\1/p' "$tmp" | head -n 1)"
+  if [[ ! -s "$tmp" ]] || ! bash -n "$tmp" || ! grep -q '^APP_NAME="LDNMP 单站备份恢复工具"$' "$tmp" || [[ -z "$downloaded_version" ]]; then
     rm -f "$tmp"
-    err "下载的脚本为空或语法检查失败，当前脚本未更新。"
+    err "下载内容不是有效的 sitebak 脚本，当前脚本未更新。"
     return 1
   fi
   local staged
@@ -913,8 +924,27 @@ update_self() {
     return 1
   fi
   rm -f "$tmp"
-  ok "更新完成：$INSTALL_PATH"
-  info "请退出当前菜单，输入 kk 打开新版菜单。"
+  ok "更新完成：$INSTALL_PATH（版本 $downloaded_version）"
+}
+
+update_and_reload() {
+  local status
+  set +e
+  ( set -Eeuo pipefail; update_self )
+  status=$?
+  set -e
+  if ((status != 0)); then
+    err "操作未完成（退出码：$status），请查看上方错误信息。"
+    return_to_menu
+    return 0
+  fi
+
+  info "正在自动载入新版菜单..."
+  if exec "$INSTALL_PATH"; then
+    return 0
+  fi
+  err "新版脚本已安装，但自动载入失败。请退出后重新输入 kk。"
+  return_to_menu
 }
 
 backup_menu() {
@@ -977,7 +1007,7 @@ main_menu() {
       4) run_menu_action restore_menu ;;
       5) snapshots_menu ;;
       6) run_menu_action delete_backup_menu backup ;;
-      7) run_menu_action update_self ;;
+      7) update_and_reload ;;
       0) exit 0 ;;
       *) warn "无效的选择，请重试。"; sleep 1 ;;
     esac

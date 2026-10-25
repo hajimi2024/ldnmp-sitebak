@@ -3,6 +3,12 @@ set -Eeuo pipefail
 
 INSTALL_PATH="${SITEBAK_INSTALL_PATH:-/usr/local/bin/kk}"
 DOWNLOAD_URL="${SITEBAK_UPDATE_URL:-https://raw.githubusercontent.com/hajimi2024/ldnmp-sitebak/main/sitebak.sh}"
+REQUEST_URL="$DOWNLOAD_URL"
+if [[ "$REQUEST_URL" == https://raw.githubusercontent.com/* ]]; then
+  separator='?'
+  [[ "$REQUEST_URL" != *\?* ]] || separator='&'
+  REQUEST_URL="${REQUEST_URL}${separator}sitebak_nocache=$(date +%s)"
+fi
 download=''
 staged=''
 YELLOW=''
@@ -31,7 +37,7 @@ if ((EUID != 0)); then
   exit 1
 fi
 
-for dependency in curl bash grep mktemp install mv rm; do
+for dependency in curl bash grep date mktemp install mv rm; do
   command -v "$dependency" >/dev/null 2>&1 || {
     printf '缺少安装所需命令：%s\n' "$dependency" >&2
     exit 1
@@ -39,7 +45,7 @@ for dependency in curl bash grep mktemp install mv rm; do
 done
 
 download="$(mktemp)"
-curl -fsSL --connect-timeout 15 --max-time 120 "$DOWNLOAD_URL" -o "$download"
+curl -fsSL --connect-timeout 15 --max-time 120 "$REQUEST_URL" -o "$download"
 if [[ ! -s "$download" ]] || ! bash -n "$download" || ! grep -q '^APP_NAME="LDNMP 单站备份恢复工具"$' "$download"; then
   printf '下载内容无效，安装已停止。\n' >&2
   exit 1
