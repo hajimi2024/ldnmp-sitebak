@@ -66,17 +66,21 @@ def run(terminal=False, **changes):
     assert process.wait() == 0
     return b''.join(chunks).decode().replace('\r\n', '\n')
 
-ansi = re.compile(r'\x1b\[[0-9;]*m')
+ansi = re.compile(r'\x1b(?:\[[0-9;]*m|\]8;;.*?\x1b\\)')
 plain = run()
 colored = run(terminal=True)
 assert '\x1b' not in plain
 assert ansi.sub('', colored).rstrip('\n') == plain.rstrip('\n')
 for number in range(8):
     assert '\x1b[1;33m%d.\x1b[0;96m' % number in colored
-for label in ['版本：', '站点目录：', '备份目录：', '快照目录：', '备注：']:
+for label in ['版本：', '站点目录：', '备份目录：', '快照目录：', '备注：', 'GitHub：']:
     assert '\x1b[1;33m' + label + '\x1b[0;92m' in colored
-for value in ['0.3.0', fixture + '/html', fixture + '/backups', 'snapshot']:
+for value in ['0.3.1', fixture + '/html', fixture + '/backups', 'snapshot']:
     assert '\x1b[0;92m' + value + '\x1b[0m' in colored
+project_url = 'https://github.com/hajimi2024/ldnmp-sitebak'
+assert ('\x1b[0;92m\x1b]8;;' + project_url + '\x1b\\' + project_url
+        + '\x1b]8;;\x1b\\\x1b[0m') in colored
+assert project_url in plain
 for code, message in [('96', '[INFO] Reading files'), ('32', '[OK] Completed'),
                       ('33', '[WARN] Overwrite confirmation'), ('31', '[ERROR] Failed')]:
     assert '\x1b[0;' + code + 'm' + message + '\x1b[0m' in colored
