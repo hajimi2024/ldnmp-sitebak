@@ -10,7 +10,7 @@ v0.1.2 起，快捷命令为 `kk`。已安装旧版的用户也请执行下方�
 ## 首次安装
 
 ```bash
-bash <(curl -fsSL --connect-timeout 15 --max-time 120 https://raw.githubusercontent.com/hajimi2024/ldnmp-sitebak/main/install.sh || printf 'exit 1\n')
+bash <(curl -fsSL https://raw.githubusercontent.com/hajimi2024/ldnmp-sitebak/main/install.sh || printf 'exit 1\n')
 ```
 
 在 Linux VPS 的 root 终端中执行（Bash）。安装成功输出“安装成功，输入 kk 进入菜单。”；
