@@ -104,6 +104,8 @@ SITEBAK_BACKUP_DIR=/root/backups kk backup example.com
 
 ## 注意事项
 
+- v0.3.3：首页 GitHub 网址改为与 LDNMP 标题同色系的细体亮蓝色，黄色标签、可点击链接和无下划线保持不变。
+
 - v0.3.2：首页 GitHub 超链接显式关闭下划线，保留点击访问能力和完整地址显示。
 
 - v0.3.1：首页在快照目录下一行显示项目 GitHub 地址；支持 OSC 8 的终端可直接点击，不支持时仍显示完整 URL 供复制。
