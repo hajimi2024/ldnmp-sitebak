@@ -67,6 +67,7 @@ kk update
 ```bash
 站点目录：/home/web/html
 备份目录：/home
+快照目录：/home  -  备注：snapshot
 Nginx 配置：/home/web/conf.d
 SSL 证书：/home/web/certs
 ```

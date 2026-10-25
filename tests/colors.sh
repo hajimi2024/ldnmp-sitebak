@@ -71,9 +71,9 @@ assert '\x1b' not in plain
 assert ansi.sub('', colored).rstrip('\n') == plain.rstrip('\n')
 for number in range(8):
     assert '\x1b[1;33m%d.\x1b[0;96m' % number in colored
-for label in ['版本：', '站点目录：', '备份目录：']:
+for label in ['版本：', '站点目录：', '备份目录：', '快照目录：', '备注：']:
     assert '\x1b[1;33m' + label + '\x1b[0;92m' in colored
-for value in ['0.2.8', fixture + '/html', fixture + '/backups']:
+for value in ['0.2.8', fixture + '/html', fixture + '/backups', 'snapshot']:
     assert '\x1b[0;92m' + value + '\x1b[0m' in colored
 for code, message in [('96', '[INFO] Reading files'), ('32', '[OK] Completed'),
                       ('33', '[WARN] Overwrite confirmation'), ('31', '[ERROR] Failed')]:

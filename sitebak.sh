@@ -157,7 +157,8 @@ EOF
   fi
   printf '\n%s版本：%s%s%s\n' "$NUMBER" "$LIGHT_GREEN" "$VERSION" "$RESET"
   printf '%s站点目录：%s%s%s\n' "$NUMBER" "$LIGHT_GREEN" "$SITE_ROOT" "$RESET"
-  printf '%s备份目录：%s%s%s\n\n' "$NUMBER" "$LIGHT_GREEN" "$BACKUP_DIR" "$RESET"
+  printf '%s备份目录：%s%s%s\n' "$NUMBER" "$LIGHT_GREEN" "$BACKUP_DIR" "$RESET"
+  printf '%s快照目录：%s%s%s  -  %s备注：%ssnapshot%s\n\n' "$NUMBER" "$LIGHT_GREEN" "$BACKUP_DIR" "$RESET" "$NUMBER" "$LIGHT_GREEN" "$RESET"
 }
 
 valid_domain() {
