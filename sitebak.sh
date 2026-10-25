@@ -41,7 +41,7 @@ info() { printf '%s[INFO] %s%s\n' "$BLUE" "$*" "$RESET"; }
 ok() { printf '%s[OK] %s%s\n' "$GREEN" "$*" "$RESET"; }
 warn() { printf '%s[WARN] %s%s\n' "$YELLOW" "$*" "$RESET"; }
 err() { printf '%s[ERROR] %s%s\n' "$RED" "$*" "$RESET" >&2; }
-ui_prompt() { printf '%s%s%s' "${2:-$BOLD}" "$1" "$RESET"; }
+ui_prompt() { printf '%s%s%s' "${2:-$NUMBER}" "$1" "$RESET"; }
 
 pause() {
   ui_prompt $'\n按回车键继续...'
@@ -733,13 +733,13 @@ restore_site() (
   warn "即将恢复站点：$domain"
   printf '%s备份文件：%s%s\n' "$BLUE" "$archive" "$RESET"
   printf '%s目标目录：%s%s\n\n' "$BLUE" "$target_dir" "$RESET"
-  ui_prompt '恢复会覆盖当前站点文件，并导入数据库。是否继续？请输入 yes 确认：' "$YELLOW"
+  ui_prompt '恢复会覆盖当前站点文件，并导入数据库。是否继续？请输入 yes 确认：' "$NUMBER"
   read -r confirm || return 1
   [[ "$confirm" == "yes" ]] || { warn "已取消恢复。"; return 1; }
 
   if [[ -d "$target_dir" ]]; then
     while true; do
-      ui_prompt '恢复前是否创建完整快照（包含数据库）？[Y/n，0 返回] ' "$YELLOW"
+      ui_prompt '恢复前是否创建完整快照（包含数据库）？[Y/n，0 返回] ' "$NUMBER"
       read -r snapshot_choice || return 1
       case "$snapshot_choice" in
         ''|Y|y)
@@ -836,7 +836,7 @@ delete_backup_menu() {
   file="$(select_backup "" "${1:-backup}" 删除)" || return 0
   header
   warn "即将删除$(archive_label "$file")：$file"
-  ui_prompt '请输入 yes 确认删除：' "$YELLOW"
+  ui_prompt '请输入 yes 确认删除：' "$NUMBER"
   read -r confirm || return 1
   if [[ "$confirm" == "yes" ]]; then
     rm -f "$file"

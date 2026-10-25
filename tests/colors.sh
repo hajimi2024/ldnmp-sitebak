@@ -27,7 +27,7 @@ warn 'Overwrite confirmation'
 err 'Failed'
 ui_prompt '请输入你的选择：'
 printf '\n'
-ui_prompt '请输入 yes 确认删除：' "$YELLOW"
+ui_prompt '请输入 yes 确认删除：' "$NUMBER"
 printf '\n'
 site="$(select_domain < <(printf '1\n'))"
 printf '\nSELECTED_SITE:%s\n' "$site"
@@ -81,7 +81,8 @@ for code, message in [('96', '[INFO] Reading files'), ('32', '[OK] Completed'),
 divider_count = colored.count('\x1b[1;96m' + '-' * 38 + '\x1b[0m\n')
 assert divider_count >= 2 and divider_count % 2 == 0
 assert '\x1b[1;96m        单站备份恢复工具\x1b[0m\n' in colored
-assert '\x1b[0;33m请输入 yes 确认删除：\x1b[0m' in colored
+for prompt in ['请输入你的选择：', '请输入 yes 确认删除：']:
+    assert '\x1b[1;33m' + prompt + '\x1b[0m' in colored
 assert run(terminal=True, NO_COLOR='1') == plain
 assert run(terminal=True, TERM='dumb') == plain
 assert '\nSELECTED_SITE:example.com\n' in colored
