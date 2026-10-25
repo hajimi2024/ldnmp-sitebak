@@ -10,11 +10,13 @@ v0.1.2 起，快捷命令为 `kk`。已安装旧版的用户也请执行下方�
 ## 首次安装
 
 ```bash
-(set -o pipefail; curl -fsSL --connect-timeout 15 --max-time 120 https://raw.githubusercontent.com/hajimi2024/ldnmp-sitebak/main/install.sh | bash) && echo "安装成功，输入 kk 进入菜单。" || (echo "安装失败，请查看上方报错。" >&2; exit 1)
+bash <(curl -fsSL --connect-timeout 15 --max-time 120 https://raw.githubusercontent.com/hajimi2024/ldnmp-sitebak/main/install.sh || printf 'exit 1\n')
 ```
 
 在 Linux VPS 的 root 终端中执行（Bash）。安装成功输出“安装成功，输入 kk 进入菜单。”；
-网络、权限、下载内容校验或写入失败时输出“安装失败，请查看上方报错。”并返回非零退出码。
+安装器运行后的权限、下载内容校验或写入失败会输出“安装失败，请查看上方报错。”并返回非零退出码。
+若最前面的安装器下载失败，`curl` 会直接报错，整条命令仍返回非零状态。
+成功或失败结果使用加粗黄色，并在结果前留出一行，避免和上方命令输出粘连。
 下载和校验在临时文件中进行，完成后才替换本地命令，临时文件自动清理。
 换电脑连接同一台 VPS 时，无需重复安装；换新 VPS 或重装系统后才需要重新安装。
 

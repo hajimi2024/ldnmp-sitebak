@@ -28,7 +28,8 @@ curl() {
   fi
 }
 export -f curl
-command_text="$(sed -n '/^(set -o pipefail;/p' "$project/README.md")"
+command_text="$(sed -n '/^bash <(curl /p' "$project/README.md")"
+[[ -n "$command_text" ]]
 for mode in bootstrap-failure failure empty invalid wrong-file bad-destination ok; do
   export MOCK_DOWNLOAD="$mode"
   export SITEBAK_INSTALL_PATH="$fixture/kk"
@@ -45,10 +46,47 @@ for mode in bootstrap-failure failure empty invalid wrong-file bad-destination o
     ! grep -q '安装失败' "$fixture/output"
   else
     [[ $status != 0 ]]
-    grep -q '安装失败' "$fixture/output"
     ! grep -q '安装成功' "$fixture/output"
+    [[ $mode == bootstrap-failure ]] || grep -q '安装失败' "$fixture/output"
     [[ $(< "$fixture/kk") == 'old script' ]]
   fi
   [[ -z $(find "$fixture" -name 'kk.*' -print -quit) ]]
 done
-printf 'PASS: documented installer success/failure output, validation, permissions and old-file preservation\n'
+
+# In an interactive terminal, the separated result line uses bold yellow.
+export SITEBAK_INSTALL_PATH="$fixture/kk"
+python3 - "$command_text" "$fixture" <<'PY'
+import errno
+import os
+import pty
+import subprocess
+import sys
+
+command, output_dir = sys.argv[1:]
+for mode, succeeds in [('ok', True), ('invalid', False)]:
+    env = os.environ.copy()
+    env['MOCK_DOWNLOAD'] = mode
+    master, slave = pty.openpty()
+    process = subprocess.Popen(['bash', '-c', command], env=env,
+                               stdin=subprocess.DEVNULL, stdout=slave, stderr=slave)
+    os.close(slave)
+    chunks = []
+    while True:
+        try:
+            chunk = os.read(master, 65536)
+        except OSError as error:
+            if error.errno == errno.EIO:
+                break
+            raise
+        if not chunk:
+            break
+        chunks.append(chunk)
+    os.close(master)
+    status = process.wait()
+    assert (status == 0) == succeeds, (mode, status)
+    with open(os.path.join(output_dir, 'tty-' + mode), 'wb') as stream:
+        stream.write(b''.join(chunks).replace(b'\r\n', b'\n'))
+PY
+grep -Fq $'\n\033[1;33m安装成功，输入 kk 进入菜单。\033[0m\n' "$fixture/tty-ok"
+grep -Fq $'\n\033[1;33m安装失败，请查看上方报错。\033[0m\n' "$fixture/tty-invalid"
+printf 'PASS: concise documented installer, yellow separated result, validation, permissions and old-file preservation\n'
