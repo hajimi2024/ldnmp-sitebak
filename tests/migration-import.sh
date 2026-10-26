@@ -25,6 +25,7 @@ prepare_db_client() {
 }
 get_target_server_identity() { printf '%s' "$fixture_server_identity"; }
 get_target_server_username() { printf '%s' fixture-user; }
+get_target_server_display() { printf '%s' 'target-vps（2C / 4G）'; }
 run_mysqldump() { printf '%s\n' 'CREATE TABLE `source_options` (`option_id` bigint);'; }
 run_mysql() {
   if [[ " $* " == *' SHOW TABLES '* ]]; then
@@ -121,6 +122,9 @@ if ! migration_preflight change-domain < <(printf '%s\n' 1 1 yes) > "$fixture/ch
 fi
 grep -Fq '站点文件和数据库已导入完成' "$fixture/change-output"
 grep -Fq '旧网址替换' "$fixture/change-output"
+grep -Fq '正在检查备份包' "$fixture/change-output"
+grep -Fq '正在导入目标数据库：target_db' "$fixture/change-output"
+grep -Fq '正在替换目标 WordPress Root' "$fixture/change-output"
 [[ $(< "$SITE_ROOT/new.example/wordpress/index.php") == source:old.example ]]
 [[ $(parse_migration_wp_define "$SITE_ROOT/new.example/wordpress/wp-config.php" DB_NAME) == target_db ]]
 [[ $(parse_migration_wp_define "$SITE_ROOT/new.example/wordpress/wp-config.php" DB_USER) == target_user ]]
@@ -132,6 +136,18 @@ grep -Fq 'CREATE TABLE' "$fixture/imported.sql"
 [[ "$(sha256sum "${NGINX_CONF_DIRS[0]}/new.example.conf")" == "$nginx_before" ]]
 diff -r "$fixture/other-before" "$SITE_ROOT/other.example"
 [[ -z "$(find "$MIGRATION_TMP_ROOT" -mindepth 1 -print -quit)" ]]
+
+# 错误确认值应停留在确认环节，后续输入 yes 才会继续。
+start_case confirm-retry
+create_source_backup old.example direct source_db
+create_target_site new.example nested target_db
+write_target_nginx new.example
+if ! migration_preflight change-domain < <(printf '%s\n' 1 new.example yse yes) > "$fixture/confirm-retry-output" 2>&1; then
+  cat "$fixture/confirm-retry-output" >&2
+  exit 1
+fi
+grep -Fq '输入错误，请输入完整小写 yes' "$fixture/confirm-retry-output"
+grep -Fq '站点文件和数据库已导入完成' "$fixture/confirm-retry-output"
 
 # SQL that can switch or create databases is rejected before confirmation and writes.
 printf 'USE another_database;\n' | gzip > "$fixture/forbidden.sql.gz"
@@ -162,7 +178,7 @@ create_source_backup old.example direct source_db
 create_target_site new.example nested target_db
 write_target_nginx new.example
 cp -a "$SITE_ROOT/new.example" "$fixture/cancel-before"
-migration_preflight change-domain < <(printf '%s\n' 1 1 no) > "$fixture/cancel-output" 2>&1
+migration_preflight change-domain < <(printf '%s\n' 1 1 no '') > "$fixture/cancel-output" 2>&1
 grep -Fq '已取消操作' "$fixture/cancel-output"
 diff -r "$fixture/cancel-before" "$SITE_ROOT/new.example"
 [[ ! -e "$fixture/imported.sql" ]]

@@ -31,6 +31,7 @@ prepare_db_client() {
 }
 get_target_server_identity() { printf '%s' "$fixture_server_identity"; }
 get_target_server_username() { printf '%s' fixture-user; }
+get_target_server_display() { printf '%s' 'target-vps（2C / 4G）'; }
 run_mysqldump() { printf '%s\n' 'CREATE TABLE `wp_options` (`option_id` bigint);'; }
 run_mysql() {
   printf '%s' "$db_tables"
@@ -123,20 +124,23 @@ done
 [[ $(parse_wp_table_prefix "$inspect_root/staged/wp-config.php") == source_ ]]
 [[ ! -e "$inspect_root/staged/outside.keep" ]]
 
-# Target selection accepts only a listed numeric choice, never an arbitrary domain.
+# Target selection accepts a listed numeric choice or its exact domain, never an arbitrary domain.
 selected="$(select_existing_domain < <(printf '%s\n' arbitrary.example 1) 2> "$fixture/strict-selection")"
 [[ "$selected" == target.example ]]
-grep -Fq '请从当前站点列表中选择' "$fixture/strict-selection"
+grep -Fq '目标域名不在当前站点列表中' "$fixture/strict-selection"
+selected="$(select_existing_domain < <(printf '%s\n' target.example) 2> "$fixture/domain-selection")"
+[[ "$selected" == target.example ]]
 
 # A cancelled stage-three confirmation preserves phase-two's zero-write behavior.
-if ! migration_preflight change-domain < <(printf '%s\n' 1 1 no) > "$fixture/change-output" 2>&1; then
+if ! migration_preflight change-domain < <(printf '%s\n' 1 1 no '') > "$fixture/change-output" 2>&1; then
   cat "$fixture/change-output" >&2
   exit 1
 fi
 grep -Fq '已取消操作' "$fixture/change-output"
 grep -Fq 'https://target.example' "$fixture/change-output"
-grep -Fq '目标服务器：target-vps / machine:0123456789abcdef' "$fixture/change-output"
-grep -Fq '用户：fixture-user' "$fixture/change-output"
+grep -Fq '目标服务器：target-vps（2C / 4G）' "$fixture/change-output"
+! grep -Fq 'machine:0123456789abcdef' "$fixture/change-output"
+! grep -Fq 'fixture-user' "$fixture/change-output"
 grep -Fq '操作类型：导入并更换域名' "$fixture/change-output"
 diff -r "$fixture/target-before" "$SITE_ROOT/target.example"
 diff -r "$fixture/unrelated-before" "$SITE_ROOT/zzz.example"

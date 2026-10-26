@@ -2,7 +2,7 @@
 
 set -Eeuo pipefail
 
-VERSION="0.3.8"
+VERSION="0.3.9"
 APP_NAME="LDNMP 单站备份恢复工具"
 
 WEB_ROOT="${SITEBAK_WEB_ROOT:-/home/web}"
@@ -90,6 +90,13 @@ migration_log() {
 migration_log_finish() {
   local status="${1:-0}"
   migration_log INFO "迁移任务结束；退出状态=$status"
+}
+
+# 同时写入终端和本次操作日志的无敏感信息进度提示。
+migration_progress() {
+  local message="$1"
+  info "$message"
+  [[ -z "$MIGRATION_LOG_FILE" ]] || migration_log INFO "$message"
 }
 
 show_recent_migration_log() {
@@ -429,7 +436,7 @@ select_domain() {
 }
 
 select_existing_domain() {
-  local title="${1:-请选择目标站点}" choice number
+  local title="${1:-请选择目标站点}" choice number domain
   local sites=()
   mapfile -t sites < <(list_sites_array)
 
@@ -447,7 +454,7 @@ select_existing_domain() {
       menu_item '0. 返回上一级' >&2; printf '\n' >&2
     fi
 
-    ui_prompt $'\n请选择目标站点编号：' >&2
+    ui_prompt $'\n请输入目标站点编号或域名：' >&2
     ui_read choice 2 || return 1
     [[ "$choice" == 0 ]] && return 1
     if [[ "$choice" =~ ^[0-9]{1,9}$ ]]; then
@@ -457,7 +464,17 @@ select_existing_domain() {
         return 0
       fi
     fi
-    warn '无效的编号，请从当前站点列表中选择。' >&2
+    for domain in "${sites[@]}"; do
+      if [[ "$choice" == "$domain" ]]; then
+        printf '%s' "$domain"
+        return 0
+      fi
+    done
+    if [[ "$choice" =~ ^[0-9]{1,9}$ ]]; then
+      warn '无效的编号，请从当前站点列表中选择。' >&2
+    else
+      warn '目标域名不在当前站点列表中，请重新选择。' >&2
+    fi
   done
 }
 
@@ -1019,7 +1036,9 @@ inspect_migration_archive() {
   [[ -f "$archive" ]] || { err "备份文件不存在：$archive"; return 1; }
   [[ "$(archive_kind "$archive" || true)" == backup ]] || { err '站点导入只接受普通备份。'; return 1; }
 
+  migration_progress '正在检查并解压外层备份包，大文件可能需要数分钟，请耐心等待。'
   extract_safe_tar "$archive" "$package_dir" '外层备份包' no || return 1
+  migration_progress '外层备份包检查和解压完成。'
   manifest="$package_dir/manifest.json"
   [[ -f "$manifest" ]] || { err '备份包缺少 manifest.json。'; return 1; }
   [[ -f "$package_dir/files/site-files.tar.gz" ]] || { err '备份包缺少站点文件。'; return 1; }
@@ -1059,7 +1078,9 @@ inspect_migration_archive() {
     [[ ! -f "$payload" ]] || tar -tzf "$payload" >/dev/null || { err "备份中的 $component 载荷无法读取。"; return 1; }
   done
 
+  migration_progress '正在检查并解压站点文件包，请耐心等待。'
   extract_safe_tar "$package_dir/files/site-files.tar.gz" "$source_site_dir" '站点文件包' yes || return 1
+  migration_progress '站点文件包检查和解压完成。'
   wp_config="$(find_wp_config "$source_site_dir")" || { err '备份包中无法唯一确定 WordPress Root。'; return 1; }
   validate_migration_wp_config "$wp_config" '源站 WordPress 配置' || return 1
   source_db_name="$(parse_migration_wp_define "$wp_config" DB_NAME)"
@@ -1282,6 +1303,18 @@ get_target_server_username() {
   printf '%s' "$username"
 }
 
+get_target_server_display() {
+  local host cores memory_kb memory_gb
+  host="$(hostname 2>/dev/null || true)"
+  [[ -n "$host" ]] || { err '无法读取目标服务器主机名。'; return 1; }
+  cores="$(getconf _NPROCESSORS_ONLN 2>/dev/null || nproc 2>/dev/null || true)"
+  [[ "$cores" =~ ^[1-9][0-9]*$ ]] || { err '无法读取目标服务器 CPU 核数。'; return 1; }
+  memory_kb="$(awk '/^MemTotal:[[:space:]]+/ { print $2; exit }' /proc/meminfo 2>/dev/null || true)"
+  [[ "$memory_kb" =~ ^[1-9][0-9]*$ ]] || { err '无法读取目标服务器内存容量。'; return 1; }
+  memory_gb=$(((memory_kb + 1048575) / 1048576))
+  printf '%s（%sC / %sG）' "$host" "$cores" "$memory_gb"
+}
+
 nginx_target_config_fingerprint() {
   local domain="$1" file
   local files=()
@@ -1380,27 +1413,35 @@ operation_type_label() {
 
 confirm_target_operation() {
   local operation="$1" source_domain="$2" target_domain="$3" target_url="$4" server_identity="$5" server_username="$6"
-  local target_root="$7" database_name="$8" archive="$9" confirm
+  local target_root="$7" database_name="$8" archive="$9" confirm server_display
+  server_display="$(get_target_server_display)" || return 1
   header
   printf '%s即将执行站点操作，请核对：%s\n\n' "$BOLD" "$RESET"
   printf '%s操作类型：%s%s%s\n' "$NUMBER" "$BLUE" "$(operation_type_label "$operation")" "$RESET"
   printf '%s源站域名：%s%s%s\n' "$NUMBER" "$BLUE" "$source_domain" "$RESET"
   printf '%s目标域名：%s%s%s\n' "$NUMBER" "$BLUE" "$target_domain" "$RESET"
   printf '%s目标网址：%s%s%s\n' "$NUMBER" "$BLUE" "$target_url" "$RESET"
-  printf '%s目标服务器：%s%s%s（用户：%s）\n' "$NUMBER" "$BLUE" "$server_identity" "$RESET" "$server_username"
+  printf '%s目标服务器：%s%s%s\n' "$NUMBER" "$BLUE" "$server_display" "$RESET"
   printf '%s目标 WordPress Root：%s%s%s\n' "$NUMBER" "$BLUE" "$target_root" "$RESET"
   printf '%s目标数据库：%s%s%s\n' "$NUMBER" "$BLUE" "$database_name" "$RESET"
   printf '%s备份文件：%s%s%s\n\n' "$NUMBER" "$BLUE" "${archive##*/}" "$RESET"
   printf '%s🚨 警告：即将写入目标网站文件及数据库。%s\n\n' "$RED" "$RESET"
-  ui_prompt '请输入 yes 确认：'
-  ui_read confirm || return 1
-  [[ "$confirm" == yes ]] || { warn '已取消操作。'; return 1; }
+  while true; do
+    ui_prompt '请输入 yes 确认：'
+    ui_read confirm || { warn '已取消操作。'; return 1; }
+    case "$confirm" in
+      yes) return 0 ;;
+      '') warn '已取消操作。'; return 1 ;;
+      0) warn '已返回上一级。'; return 1 ;;
+      *) warn '输入错误，请输入完整小写 yes；直接回车取消，或输入 0 返回上一级。' ;;
+    esac
+  done
 }
 
 validate_migration_sql_payload() {
   local sql_file="$1"
   [[ -f "$sql_file" ]] || { err '缺少待导入的 SQL 文件。'; return 1; }
-  gzip -t "$sql_file" || { err '待导入的 SQL 压缩文件校验失败。'; return 1; }
+  # 已由 inspect_migration_archive 对同一归档成员完成 gzip 完整性校验；此处仅扫描危险 SQL，避免重复完整解压。
   if gzip -dc -- "$sql_file" | grep -Eiq '^[[:space:]]*(CREATE|DROP)[[:space:]]+(DATABASE|SCHEMA)|^[[:space:]]*USE[[:space:]]+'; then
     err 'SQL 包含创建、删除或切换数据库语句，已拒绝导入。'
     return 1
@@ -1834,29 +1875,10 @@ migration_preflight() (
   }
   migration_log INFO "已选择普通备份：${archive##*/}"
 
-  [[ -d "$MIGRATION_TMP_ROOT" ]] || { err "迁移临时目录根路径不存在：$MIGRATION_TMP_ROOT"; migration_log ERROR '迁移临时目录根路径不存在。'; return 1; }
-  tmp="$(mktemp -d "$MIGRATION_TMP_ROOT/sitebak.migrate.XXXXXX")"
-  chmod 0700 "$tmp"
-  if ! inspect_migration_archive "$archive" "$tmp/package" "$tmp/source-site"; then
-    migration_log ERROR '普通备份结构或内容预检失败。'
-    return 1
-  fi
-  archive_sha256="$(sha256sum "$archive" | awk '{print $1}')"
-  migration_log INFO "备份预检通过；源域名=$MIGRATION_SOURCE_DOMAIN；源数据库=$MIGRATION_SOURCE_DB；迁移表前缀=$MIGRATION_SOURCE_TABLE_PREFIX；备份指纹=$archive_sha256"
-
   target_domain="$(select_existing_domain '请选择已预建的空 WordPress 目标站点')" || {
     migration_log INFO '用户取消了目标站点选择。'
     return 0
   }
-  case "$mode" in
-    change-domain)
-      [[ "$target_domain" != "$MIGRATION_SOURCE_DOMAIN" ]] || { err '导入并更换域名要求源域名与目标域名不同。'; migration_log ERROR '源域名与目标域名相同。'; return 1; }
-      ;;
-    keep-domain)
-      [[ "$target_domain" == "$MIGRATION_SOURCE_DOMAIN" ]] || { err '导入并保留域名要求源域名与目标域名完全一致。'; migration_log ERROR '源域名与目标域名不一致。'; return 1; }
-      ;;
-  esac
-
   target_dir="$(site_path "$target_domain")"
   target_wp_config="$(find_wp_config "$target_dir")" || { err '无法唯一确定目标 WordPress Root。'; migration_log ERROR '目标 WordPress Root 不唯一。'; return 1; }
   validate_migration_target_scope "$target_domain" "$target_wp_config" || { migration_log ERROR '目标 WordPress Root 路径范围检查失败。'; return 1; }
@@ -1865,8 +1887,31 @@ migration_preflight() (
   target_db_user="$DB_USER"
   target_db_password="$DB_PASSWORD"
   target_db_host="$DB_HOST"
+  migration_progress "正在检查目标数据库是否为空：$DB_NAME"
   verify_empty_target_database || { migration_log ERROR "目标数据库空库检查失败；目标数据库=$DB_NAME"; return 1; }
-  migration_log INFO "目标数据库连接与空库检查通过；目标数据库=$DB_NAME"
+  migration_progress "目标数据库空库检查完成：$DB_NAME"
+
+  [[ -d "$MIGRATION_TMP_ROOT" ]] || { err "迁移临时目录根路径不存在：$MIGRATION_TMP_ROOT"; migration_log ERROR '迁移临时目录根路径不存在。'; return 1; }
+  tmp="$(mktemp -d "$MIGRATION_TMP_ROOT/sitebak.migrate.XXXXXX")"
+  chmod 0700 "$tmp"
+  migration_progress "正在检查备份包：${archive##*/}"
+  if ! inspect_migration_archive "$archive" "$tmp/package" "$tmp/source-site"; then
+    migration_log ERROR '普通备份结构或内容预检失败。'
+    migration_progress '备份包检查失败。'
+    return 1
+  fi
+  archive_sha256="$(sha256sum "$archive" | awk '{print $1}')"
+  migration_progress "备份包检查完成：${archive##*/}"
+  migration_log INFO "备份预检通过；源域名=$MIGRATION_SOURCE_DOMAIN；源数据库=$MIGRATION_SOURCE_DB；迁移表前缀=$MIGRATION_SOURCE_TABLE_PREFIX；备份指纹=$archive_sha256"
+
+  case "$mode" in
+    change-domain)
+      [[ "$target_domain" != "$MIGRATION_SOURCE_DOMAIN" ]] || { err '导入并更换域名要求源域名与目标域名不同。'; migration_log ERROR '源域名与目标域名相同。'; return 1; }
+      ;;
+    keep-domain)
+      [[ "$target_domain" == "$MIGRATION_SOURCE_DOMAIN" ]] || { err '导入并保留域名要求源域名与目标域名完全一致。'; migration_log ERROR '源域名与目标域名不一致。'; return 1; }
+      ;;
+  esac
 
   target_scheme="$(detect_target_scheme "$target_domain")" || { migration_log ERROR '目标 Nginx 协议检查失败。'; return 1; }
   target_url="${target_scheme}://${target_domain}"
@@ -1877,25 +1922,32 @@ migration_preflight() (
   }
   locked_identity="$MIGRATION_TARGET_IDENTITY"
 
+  migration_progress '正在构建 WordPress 文件暂存区，请耐心等待。'
   prepare_migration_stage "$MIGRATION_SOURCE_WP_ROOT" "$target_wp_config" "$tmp/staged-wordpress" || {
     migration_log ERROR 'WordPress Root 暂存构建失败。'
+    migration_progress 'WordPress 文件暂存失败。'
     return 1
   }
+  migration_progress 'WordPress 文件暂存完成。'
   [[ "$(parse_migration_wp_define "$tmp/staged-wordpress/wp-config.php" DB_NAME)" == "$DB_NAME" ]] || {
     err '暂存 WordPress 配置未正确使用目标数据库。'
     migration_log ERROR '暂存配置目标数据库复核失败。'
     return 1
   }
   target_sql="$tmp/package/database/${MIGRATION_SOURCE_DB}.sql.gz"
+  migration_progress '正在检查待导入 SQL 的安全内容。'
   validate_migration_sql_payload "$target_sql" || {
     migration_log ERROR 'SQL 安全检查失败。'
+    migration_progress '待导入 SQL 安全检查失败。'
     return 1
   }
+  migration_progress '待导入 SQL 安全检查完成。'
   revalidate_migration_target_identity "$target_domain" "$locked_identity" "$MIGRATION_SOURCE_TABLE_PREFIX" || {
     migration_log ERROR '暂存完成后的目标身份重新验证失败。'
     return 1
   }
 
+  migration_log INFO "目标数据库连接与空库检查通过；目标数据库=$MIGRATION_TARGET_DB_NAME"
   migration_log INFO "目标预检通过；服务器=$MIGRATION_TARGET_SERVER；用户=$MIGRATION_TARGET_SERVER_USERNAME；目标域名=$target_domain；目标协议=$target_scheme；目标属主=$target_owner；数据库=$MIGRATION_TARGET_DB_NAME；目标身份=$locked_identity"
   confirm_target_operation "$mode" "$MIGRATION_SOURCE_DOMAIN" "$target_domain" "$target_url" "$MIGRATION_TARGET_SERVER" "$MIGRATION_TARGET_SERVER_USERNAME" "$target_wp_root" "$MIGRATION_TARGET_DB_NAME" "$archive" || {
     migration_log INFO '用户取消站点导入，未写入目标网站或数据库。'
@@ -1907,14 +1959,14 @@ migration_preflight() (
     migration_log ERROR '数据库导入前目标身份重新验证失败。'
     return 1
   }
-  migration_log INFO "开始导入目标数据库：$MIGRATION_TARGET_DB_NAME"
+  migration_progress "正在导入目标数据库：$MIGRATION_TARGET_DB_NAME"
   if ! gzip -dc -- "$target_sql" | run_mysql "$MIGRATION_TARGET_DB_NAME"; then
     migration_log ERROR "数据库导入失败；目标数据库=$MIGRATION_TARGET_DB_NAME；可能已写入部分数据。"
     err '数据库导入失败，目标数据库可能已部分写入；请重建空站点后再试。'
     return 1
   fi
   database_imported=yes
-  migration_log INFO "目标数据库导入完成：$MIGRATION_TARGET_DB_NAME"
+  migration_progress "目标数据库导入完成：$MIGRATION_TARGET_DB_NAME"
 
   [[ "$(sha256sum "$archive" | awk '{print $1}')" == "$archive_sha256" ]] || { err '文件写入前备份文件发生变化，已停止导入。'; migration_log ERROR '文件写入前备份指纹变化。'; return 1; }
   revalidate_migration_target_scope "$target_domain" "$locked_identity" "$MIGRATION_SOURCE_TABLE_PREFIX" || {
@@ -1922,7 +1974,7 @@ migration_preflight() (
     err '目标范围发生变化，数据库已导入但未替换目标文件；请重建空站点后再试。'
     return 1
   }
-  migration_log INFO "开始替换目标 WordPress Root：$target_wp_root"
+  migration_progress "正在替换目标 WordPress Root：$target_wp_root"
   if ! replace_migration_target_files "$tmp/staged-wordpress" "$target_wp_root" "$target_owner"; then
     migration_log ERROR '目标 WordPress Root 替换失败；数据库已导入，文件可能部分写入。'
     err '目标文件替换失败，数据库已导入且文件可能部分写入；请重建空站点后再试。'
@@ -1938,7 +1990,7 @@ migration_preflight() (
     migration_log ERROR '导入后数据库连接或表前缀不一致。'
     return 1
   }
-  migration_log INFO "目标 WordPress Root 导入完成：$target_wp_root"
+  migration_progress "目标 WordPress Root 导入完成：$target_wp_root"
   header
   ok '站点文件和数据库已导入完成。'
   warn '更换域名模式尚未执行旧网址替换；新域名网站可能暂时不可用，需等待阶段四处理。'
