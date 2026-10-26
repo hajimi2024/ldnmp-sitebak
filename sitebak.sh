@@ -2,7 +2,7 @@
 
 set -Eeuo pipefail
 
-VERSION="0.3.7"
+VERSION="0.3.8"
 APP_NAME="LDNMP 单站备份恢复工具"
 
 WEB_ROOT="${SITEBAK_WEB_ROOT:-/home/web}"
@@ -1360,6 +1360,10 @@ revalidate_migration_target_identity() {
   revalidate_target_identity "$1" "$2" "$3" yes
 }
 
+revalidate_migration_target_scope() {
+  revalidate_target_identity "$1" "$2" "$3" no
+}
+
 revalidate_restore_target_identity() {
   revalidate_target_identity "$1" "$2" "$3" no
 }
@@ -1391,6 +1395,25 @@ confirm_target_operation() {
   ui_prompt '请输入 yes 确认：'
   ui_read confirm || return 1
   [[ "$confirm" == yes ]] || { warn '已取消操作。'; return 1; }
+}
+
+validate_migration_sql_payload() {
+  local sql_file="$1"
+  [[ -f "$sql_file" ]] || { err '缺少待导入的 SQL 文件。'; return 1; }
+  gzip -t "$sql_file" || { err '待导入的 SQL 压缩文件校验失败。'; return 1; }
+  if gzip -dc -- "$sql_file" | grep -Eiq '^[[:space:]]*(CREATE|DROP)[[:space:]]+(DATABASE|SCHEMA)|^[[:space:]]*USE[[:space:]]+'; then
+    err 'SQL 包含创建、删除或切换数据库语句，已拒绝导入。'
+    return 1
+  fi
+}
+
+replace_migration_target_files() {
+  local stage_root="$1" target_root="$2" owner="$3"
+  [[ -d "$stage_root" && -d "$target_root" ]] || { err '暂存目录或目标 WordPress Root 不存在。'; return 1; }
+  [[ "$owner" =~ ^[0-9]+:[0-9]+$ ]] || { err '目标 WordPress Root 属主不合法。'; return 1; }
+  find "$target_root" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} + || return 1
+  cp -a -- "$stage_root/." "$target_root/" || return 1
+  find "$target_root" -mindepth 1 -exec chown -h "$owner" {} + || return 1
 }
 
 restore_site() (
@@ -1783,8 +1806,9 @@ snapshots_menu() {
 
 migration_preflight() (
   umask 077
-  local mode="$1" archive target_domain target_dir target_wp_config target_wp_root target_scheme target_url
-  local tmp='' status=0 target_owner locked_identity archive_sha256
+  local mode="$1" archive target_domain target_dir target_wp_config target_wp_root target_scheme target_url target_sql
+  local tmp='' status=0 target_owner locked_identity archive_sha256 database_imported=no files_replaced=no
+  local target_db_user target_db_password target_db_host
   case "$mode" in
     change-domain|keep-domain) ;;
     *) err '未知迁移模式。'; return 1 ;;
@@ -1798,11 +1822,12 @@ migration_preflight() (
       rm -rf -- "$tmp"
       migration_log INFO "已清理本次迁移临时目录。"
     fi
+    migration_log INFO "阶段三写入状态；数据库已导入=$database_imported；文件已替换=$files_replaced"
     migration_log_finish "$status"
   ' EXIT
 
-  migration_log INFO '阶段二只执行只读预检和临时暂存，不修改目标站点或数据库。'
-  need_cmd tar gzip awk sed grep find cut realpath readlink dirname stat cp mv chmod mktemp hostname sha256sum sort id
+  migration_log INFO '开始站点导入：先执行安全预检和暂存，确认后才写入目标数据库和 WordPress Root。'
+  need_cmd tar gzip awk sed grep find cut realpath readlink dirname stat cp mv chmod mktemp hostname sha256sum sort id chown
   archive="$(select_backup '' backup 迁移)" || {
     migration_log INFO '用户取消了备份选择。'
     return 0
@@ -1837,6 +1862,9 @@ migration_preflight() (
   validate_migration_target_scope "$target_domain" "$target_wp_config" || { migration_log ERROR '目标 WordPress Root 路径范围检查失败。'; return 1; }
   target_wp_root="$MIGRATION_TARGET_WP_ROOT"
   read_migration_db_config_file "$target_wp_config" || { migration_log ERROR '无法读取目标数据库配置。'; return 1; }
+  target_db_user="$DB_USER"
+  target_db_password="$DB_PASSWORD"
+  target_db_host="$DB_HOST"
   verify_empty_target_database || { migration_log ERROR "目标数据库空库检查失败；目标数据库=$DB_NAME"; return 1; }
   migration_log INFO "目标数据库连接与空库检查通过；目标数据库=$DB_NAME"
 
@@ -1858,30 +1886,64 @@ migration_preflight() (
     migration_log ERROR '暂存配置目标数据库复核失败。'
     return 1
   }
+  target_sql="$tmp/package/database/${MIGRATION_SOURCE_DB}.sql.gz"
+  validate_migration_sql_payload "$target_sql" || {
+    migration_log ERROR 'SQL 安全检查失败。'
+    return 1
+  }
   revalidate_migration_target_identity "$target_domain" "$locked_identity" "$MIGRATION_SOURCE_TABLE_PREFIX" || {
     migration_log ERROR '暂存完成后的目标身份重新验证失败。'
     return 1
   }
 
   migration_log INFO "目标预检通过；服务器=$MIGRATION_TARGET_SERVER；用户=$MIGRATION_TARGET_SERVER_USERNAME；目标域名=$target_domain；目标协议=$target_scheme；目标属主=$target_owner；数据库=$MIGRATION_TARGET_DB_NAME；目标身份=$locked_identity"
-  migration_log INFO '阶段二暂存构建完成；没有导入数据库或替换目标文件。'
+  confirm_target_operation "$mode" "$MIGRATION_SOURCE_DOMAIN" "$target_domain" "$target_url" "$MIGRATION_TARGET_SERVER" "$MIGRATION_TARGET_SERVER_USERNAME" "$target_wp_root" "$MIGRATION_TARGET_DB_NAME" "$archive" || {
+    migration_log INFO '用户取消站点导入，未写入目标网站或数据库。'
+    return 0
+  }
+
+  [[ "$(sha256sum "$archive" | awk '{print $1}')" == "$archive_sha256" ]] || { err '确认后备份文件发生变化，已停止导入。'; migration_log ERROR '确认后备份指纹变化。'; return 1; }
+  revalidate_migration_target_identity "$target_domain" "$locked_identity" "$MIGRATION_SOURCE_TABLE_PREFIX" || {
+    migration_log ERROR '数据库导入前目标身份重新验证失败。'
+    return 1
+  }
+  migration_log INFO "开始导入目标数据库：$MIGRATION_TARGET_DB_NAME"
+  if ! gzip -dc -- "$target_sql" | run_mysql "$MIGRATION_TARGET_DB_NAME"; then
+    migration_log ERROR "数据库导入失败；目标数据库=$MIGRATION_TARGET_DB_NAME；可能已写入部分数据。"
+    err '数据库导入失败，目标数据库可能已部分写入；请重建空站点后再试。'
+    return 1
+  fi
+  database_imported=yes
+  migration_log INFO "目标数据库导入完成：$MIGRATION_TARGET_DB_NAME"
+
+  [[ "$(sha256sum "$archive" | awk '{print $1}')" == "$archive_sha256" ]] || { err '文件写入前备份文件发生变化，已停止导入。'; migration_log ERROR '文件写入前备份指纹变化。'; return 1; }
+  revalidate_migration_target_scope "$target_domain" "$locked_identity" "$MIGRATION_SOURCE_TABLE_PREFIX" || {
+    migration_log ERROR '文件写入前目标范围重新验证失败；数据库已导入，未替换目标文件。'
+    err '目标范围发生变化，数据库已导入但未替换目标文件；请重建空站点后再试。'
+    return 1
+  }
+  migration_log INFO "开始替换目标 WordPress Root：$target_wp_root"
+  if ! replace_migration_target_files "$tmp/staged-wordpress" "$target_wp_root" "$target_owner"; then
+    migration_log ERROR '目标 WordPress Root 替换失败；数据库已导入，文件可能部分写入。'
+    err '目标文件替换失败，数据库已导入且文件可能部分写入；请重建空站点后再试。'
+    return 1
+  fi
+  files_replaced=yes
+  target_wp_config="$(find_wp_config "$target_dir")" || { err '导入后无法唯一确定目标 WordPress Root。'; migration_log ERROR '导入后目标 WordPress Root 无法确认。'; return 1; }
+  validate_migration_target_scope "$target_domain" "$target_wp_config" || { migration_log ERROR '导入后目标 WordPress Root 超出范围。'; return 1; }
+  [[ "$MIGRATION_TARGET_WP_ROOT" == "$target_wp_root" ]] || { err '导入后 WordPress Root 与确认目标不一致。'; migration_log ERROR '导入后 WordPress Root 变化。'; return 1; }
+  read_migration_db_config_file "$target_wp_config" || { migration_log ERROR '导入后无法读取目标数据库配置。'; return 1; }
+  [[ "$DB_NAME" == "$MIGRATION_TARGET_DB_NAME" && "$DB_USER" == "$target_db_user" && "$DB_PASSWORD" == "$target_db_password" && "$DB_HOST" == "$target_db_host" && "$(validate_wp_table_prefix "$target_wp_config" '导入后 WordPress 配置')" == "$MIGRATION_SOURCE_TABLE_PREFIX" ]] || {
+    err '导入后数据库连接或表前缀与确认目标不一致。'
+    migration_log ERROR '导入后数据库连接或表前缀不一致。'
+    return 1
+  }
+  migration_log INFO "目标 WordPress Root 导入完成：$target_wp_root"
   header
-  printf '%s站点导入预检结果%s\n\n' "$BOLD" "$RESET"
-  printf '%s导入模式：%s%s%s\n' "$NUMBER" "$BLUE" "$(operation_type_label "$mode")" "$RESET"
-  printf '%s普通备份：%s%s%s\n' "$NUMBER" "$BLUE" "${archive##*/}" "$RESET"
-  printf '%s源域名：%s%s%s\n' "$NUMBER" "$BLUE" "$MIGRATION_SOURCE_DOMAIN" "$RESET"
-  printf '%s目标域名：%s%s%s\n' "$NUMBER" "$BLUE" "$target_domain" "$RESET"
-  printf '%s目标服务器：%s%s%s（用户：%s）\n' "$NUMBER" "$BLUE" "$MIGRATION_TARGET_SERVER" "$RESET" "$MIGRATION_TARGET_SERVER_USERNAME"
-  printf '%s目标 WordPress Root：%s%s%s\n' "$NUMBER" "$BLUE" "$target_wp_root" "$RESET"
-  printf '%s数据库连接：%s%s%s\n' "$NUMBER" "$BLUE" "$MIGRATION_TARGET_DB_ENDPOINT" "$RESET"
-  printf '%s目标数据库：%s%s%s\n' "$NUMBER" "$BLUE" "$MIGRATION_TARGET_DB_NAME" "$RESET"
-  printf '%s目标原表前缀：%s%s%s\n' "$NUMBER" "$BLUE" "$MIGRATION_TARGET_ORIGINAL_PREFIX" "$RESET"
-  printf '%s迁移表前缀：%s%s%s\n' "$NUMBER" "$BLUE" "$MIGRATION_TARGET_MIGRATION_PREFIX" "$RESET"
-  printf '%s目标网址：%s%s%s\n' "$NUMBER" "$BLUE" "$target_url" "$RESET"
-  printf '%s目标身份指纹：%s%s%s\n\n' "$NUMBER" "$BLUE" "$locked_identity" "$RESET"
-  ok '阶段二预检和临时暂存已通过。'
-  warn '当前阶段未导入数据库、未替换目标文件，也未修改 Nginx 或 SSL。'
-  ok "迁移日志已保存：$MIGRATION_LOG_FILE"
+  ok '站点文件和数据库已导入完成。'
+  warn '更换域名模式尚未执行旧网址替换；新域名网站可能暂时不可用，需等待阶段四处理。'
+  info '本阶段未修改 Nginx、SSL，也未重启共享容器。'
+  ok "操作日志已保存：$MIGRATION_LOG_FILE"
 )
 
 migration_menu() {

@@ -128,20 +128,16 @@ selected="$(select_existing_domain < <(printf '%s\n' arbitrary.example 1) 2> "$f
 [[ "$selected" == target.example ]]
 grep -Fq '请从当前站点列表中选择' "$fixture/strict-selection"
 
-# Full phase-two preflight is read-only and cleans its temporary directory.
-if ! migration_preflight change-domain < <(printf '%s\n' 1 1) > "$fixture/change-output" 2>&1; then
+# A cancelled stage-three confirmation preserves phase-two's zero-write behavior.
+if ! migration_preflight change-domain < <(printf '%s\n' 1 1 no) > "$fixture/change-output" 2>&1; then
   cat "$fixture/change-output" >&2
   exit 1
 fi
-grep -Fq '阶段二预检和临时暂存已通过' "$fixture/change-output"
+grep -Fq '已取消操作' "$fixture/change-output"
 grep -Fq 'https://target.example' "$fixture/change-output"
 grep -Fq '目标服务器：target-vps / machine:0123456789abcdef' "$fixture/change-output"
 grep -Fq '用户：fixture-user' "$fixture/change-output"
-grep -Fq '导入模式：导入并更换域名' "$fixture/change-output"
-grep -Fq '目标原表前缀：target_' "$fixture/change-output"
-grep -Fq '迁移表前缀：source_' "$fixture/change-output"
-grep -Eq '目标身份指纹：[0-9a-f]{64}' "$fixture/change-output"
-grep -Fq '未导入数据库、未替换目标文件' "$fixture/change-output"
+grep -Fq '操作类型：导入并更换域名' "$fixture/change-output"
 diff -r "$fixture/target-before" "$SITE_ROOT/target.example"
 diff -r "$fixture/unrelated-before" "$SITE_ROOT/zzz.example"
 [[ -z "$(find "$MIGRATION_TMP_ROOT" -mindepth 1 -print -quit)" ]]
@@ -194,16 +190,22 @@ grep -Fq '要求源域名与目标域名完全一致' "$fixture/failure-output"
 # Preserve-domain preflight also succeeds when the uploaded backup and target match.
 fixture_stamp=20261026_120100
 create_source_backup same.example nested same_db
+same_archive="$BACKUP_DIR/same.example_${fixture_stamp}.tar.gz"
 create_target_site same.example direct same_target_db
 printf 'server { listen 80; server_name same.example; }\n' > "${NGINX_CONF_DIRS[0]}/same.example.conf"
 cp -a "$SITE_ROOT/same.example" "$fixture/same-before"
-if ! migration_preflight keep-domain < <(printf '%s\n' 1 1) > "$fixture/keep-output" 2>&1; then
+mapfile -t backup_options < <(list_backups_for_domain '' backup)
+for i in "${!backup_options[@]}"; do
+  [[ "${backup_options[$i]}" == "$same_archive" ]] && same_choice=$((i + 1))
+done
+if ! migration_preflight keep-domain < <(printf '%s\n' "$same_choice" 1 no) > "$fixture/keep-output" 2>&1; then
   cat "$fixture/keep-output" >&2
   exit 1
 fi
-grep -Fq '源域名：same.example' "$fixture/keep-output"
-grep -Fq '目标域名：same.example' "$fixture/keep-output"
-grep -Fq 'http://same.example' "$fixture/keep-output"
+if ! grep -Fq '源站域名：same.example' "$fixture/keep-output" || ! grep -Fq '目标域名：same.example' "$fixture/keep-output" || ! grep -Fq 'http://same.example' "$fixture/keep-output"; then
+  cat "$fixture/keep-output" >&2
+  exit 1
+fi
 diff -r "$fixture/same-before" "$SITE_ROOT/same.example"
 diff -r "$fixture/unrelated-before" "$SITE_ROOT/zzz.example"
 
