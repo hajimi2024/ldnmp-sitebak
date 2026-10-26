@@ -2,7 +2,7 @@
 
 set -Eeuo pipefail
 
-VERSION="0.3.6"
+VERSION="0.3.7"
 APP_NAME="LDNMP 单站备份恢复工具"
 
 WEB_ROOT="${SITEBAK_WEB_ROOT:-/home/web}"
@@ -313,6 +313,29 @@ parse_migration_wp_define() {
       exit
     }
   ' "$file"
+}
+
+parse_wp_table_prefix() {
+  local file="$1"
+  awk '
+    /^[[:space:]]*\$table_prefix[[:space:]]*=/ {
+      line=$0
+      sub(/^[^=]*=[[:space:]]*/, "", line)
+      sub(/["\047][[:space:]]*;.*$/, "", line)
+      sub(/^[[:space:]]*["\047]/, "", line)
+      print line
+      exit
+    }
+  ' "$file"
+}
+
+validate_wp_table_prefix() {
+  local file="$1" label="$2" count prefix
+  count="$(awk '/^[[:space:]]*\$table_prefix[[:space:]]*=/ { count++ } END { print count + 0 }' "$file")"
+  [[ "$count" == 1 ]] || { err "${label}的 table_prefix 必须存在且只能定义一次。"; return 1; }
+  prefix="$(parse_wp_table_prefix "$file")"
+  [[ "$prefix" =~ ^[A-Za-z0-9_]+$ ]] || { err "${label}的 table_prefix 不合法。"; return 1; }
+  printf '%s' "$prefix"
 }
 
 validate_migration_wp_config() {
@@ -873,51 +896,84 @@ manifest_number_once() {
   printf '%s' "${values[0]}"
 }
 
+canonical_archive_member_path() {
+  local path="$1" component canonical=''
+  local components=()
+  while [[ "$path" == ./* ]]; do path="${path#./}"; done
+  IFS='/' read -r -a components <<< "$path"
+  for component in "${components[@]}"; do
+    case "$component" in
+      ''|.) continue ;;
+      ..) return 1 ;;
+      *) canonical+="${canonical:+/}$component" ;;
+    esac
+  done
+  printf '%s' "${canonical:-.}"
+}
+
 validate_tar_archive() {
-  local archive="$1" label="$2" allow_symlinks="${3:-no}" listing verbose types member clean line target
+  local archive="$1" label="$2" allow_symlinks="${3:-no}" listing verbose member canonical type line target
+  local index part parent
+  local members=() verbose_lines=() parts=()
+  declare -A seen=() member_types=() required_parents=()
   if ! listing="$(tar --quoting-style=escape -tzf "$archive")"; then
     err "${label}无法读取。"
     return 1
   fi
-  while IFS= read -r member; do
-    [[ -n "$member" ]] || { err "${label}包含空文件名。"; return 1; }
-    clean="$member"
-    while [[ "$clean" == ./* ]]; do clean="${clean#./}"; done
-    [[ -n "$clean" || "$member" == . || "$member" == ./ ]] || { err "${label}包含异常路径。"; return 1; }
-    if [[ "$clean" == /* || "$clean" == .. || "$clean" == ../* || "$clean" == */../* || "$clean" == */.. || "$clean" == *$'\r'* ]]; then
-      err "${label}包含越界路径：$member"
-      return 1
-    fi
-  done <<< "$listing"
-
   if ! verbose="$(tar --quoting-style=escape -tzvf "$archive")"; then
     err "${label}类型检查失败。"
     return 1
   fi
-  types="$(cut -c1 <<< "$verbose")"
-  if grep -Evq '^[-dlh]$' <<< "$types"; then
-    err "${label}包含设备、管道或其他不支持的特殊文件。"
-    return 1
-  fi
-  if grep -q '^h$' <<< "$types"; then
-    err "${label}包含不支持的硬链接。"
-    return 1
-  fi
-  if [[ "$allow_symlinks" != yes ]] && grep -q '^l$' <<< "$types"; then
-    err "${label}不允许包含符号链接。"
-    return 1
-  fi
-  if [[ "$allow_symlinks" == yes ]]; then
-    while IFS= read -r line; do
-      [[ "${line:0:1}" == l ]] || continue
+  mapfile -t members <<< "$listing"
+  mapfile -t verbose_lines <<< "$verbose"
+  ((${#members[@]} == ${#verbose_lines[@]})) || { err "${label}成员列表无法可靠解析。"; return 1; }
+
+  for index in "${!members[@]}"; do
+    member="${members[$index]}"
+    line="${verbose_lines[$index]}"
+    type="${line:0:1}"
+    [[ -n "$member" ]] || { err "${label}包含空文件名。"; return 1; }
+    if [[ "$member" == /* || "$member" == *$'\r'* ]] || ! canonical="$(canonical_archive_member_path "$member")"; then
+      err "${label}包含越界路径：$member"
+      return 1
+    fi
+    [[ -z "${seen[$canonical]+x}" ]] || { err "${label}包含重复成员路径：$member"; return 1; }
+    case "$type" in
+      -|d) ;;
+      l)
+        [[ "$allow_symlinks" == yes ]] || { err "${label}不允许包含符号链接。"; return 1; }
+        ;;
+      h) err "${label}包含不支持的硬链接。"; return 1 ;;
+      *) err "${label}包含设备、管道或其他不支持的特殊文件。"; return 1 ;;
+    esac
+
+    if [[ "$canonical" != . ]]; then
+      IFS='/' read -r -a parts <<< "$canonical"
+      parent=''
+      for ((part=0; part<${#parts[@]}-1; part++)); do
+        parent+="${parent:+/}${parts[$part]}"
+        case "${member_types[$parent]:-}" in
+          l|-) err "${label}包含经由链接或文件父路径写入的成员：$member"; return 1 ;;
+        esac
+        required_parents[$parent]=1
+      done
+      if [[ "$type" != d && -n "${required_parents[$canonical]+x}" ]]; then
+        err "${label}包含会覆盖既有父路径的成员：$member"
+        return 1
+      fi
+    fi
+
+    if [[ "$type" == l ]]; then
       [[ "$line" == *' -> '* ]] || { err "${label}包含无法识别的符号链接。"; return 1; }
       target="${line##* -> }"
-      if [[ "$target" == /* || "$target" == .. || "$target" == ../* || "$target" == */../* || "$target" == */.. ]]; then
+      if [[ -z "$target" || "$target" == /* ]] || ! canonical_archive_member_path "$target" >/dev/null; then
         err "${label}包含指向目录外部的符号链接。"
         return 1
       fi
-    done <<< "$verbose"
-  fi
+    fi
+    seen[$canonical]=1
+    member_types[$canonical]="$type"
+  done
 }
 
 validate_extracted_tree() {
@@ -942,7 +998,14 @@ validate_extracted_tree() {
 extract_safe_tar() {
   local archive="$1" destination="$2" label="$3" allow_symlinks="${4:-no}"
   validate_tar_archive "$archive" "$label" "$allow_symlinks" || return 1
-  mkdir -p "$destination"
+  if [[ -e "$destination" ]]; then
+    [[ -d "$destination" && -z "$(find "$destination" -mindepth 1 -print -quit)" ]] || {
+      err "${label}的解压目标不是空目录。"
+      return 1
+    }
+  else
+    mkdir -p "$destination"
+  fi
   tar --no-same-owner --delay-directory-restore -C "$destination" -xzf "$archive" || {
     err "${label}解压失败。"
     return 1
@@ -1001,6 +1064,7 @@ inspect_migration_archive() {
   validate_migration_wp_config "$wp_config" '源站 WordPress 配置' || return 1
   source_db_name="$(parse_migration_wp_define "$wp_config" DB_NAME)"
   [[ "$source_db_name" == "$db_name" ]] || { err 'manifest 与源站 WordPress 数据库名称不一致。'; return 1; }
+  MIGRATION_SOURCE_TABLE_PREFIX="$(validate_wp_table_prefix "$wp_config" '源站 WordPress 配置')" || return 1
   MIGRATION_SOURCE_WP_ROOT="$(dirname -- "$wp_config")"
 }
 
@@ -1030,7 +1094,8 @@ replace_migration_wp_define() {
 }
 
 prepare_migration_stage() {
-  local source_wp_root="$1" target_wp_config="$2" stage_root="$3" key replacement_file staged_config
+  local source_wp_root="$1" target_wp_config="$2" stage_root="$3" key replacement_file staged_config source_prefix staged_prefix
+  source_prefix="$(validate_wp_table_prefix "$source_wp_root/wp-config.php" '源站 WordPress 配置')" || return 1
   mkdir -p "$stage_root"
   cp -a -- "$source_wp_root/." "$stage_root/"
   staged_config="$stage_root/wp-config.php"
@@ -1049,6 +1114,8 @@ prepare_migration_stage() {
       return 1
     fi
   done
+  staged_prefix="$(validate_wp_table_prefix "$staged_config" '暂存 WordPress 配置')" || return 1
+  [[ "$staged_prefix" == "$source_prefix" ]] || { err '暂存 WordPress 配置的 table_prefix 发生变化。'; return 1; }
 }
 
 validate_migration_target_scope() {
@@ -1080,7 +1147,7 @@ verify_empty_target_database() {
   fi
 }
 
-extract_nginx_domain_blocks() {
+classify_nginx_domain_blocks() {
   local file="$1" domain="$2"
   awk -v domain="$domain" '
     function brace_delta(text, copy, opens, closes) {
@@ -1090,7 +1157,8 @@ extract_nginx_domain_blocks() {
       closes=gsub(/\}/, "}", copy)
       return opens - closes
     }
-    function inspect_server_name(text, directives, directive_count, directive_index, normalized, fields, field_count, field_index) {
+    function classify_block(text, directives, directive_count, directive_index, normalized, fields, field_count, field_index, endpoint, scan_index) {
+      matched=has_443=has_443_ssl=has_http=has_cert=has_key=has_any_ssl=0
       directive_count=split(text, directives, /;/)
       for (directive_index=1; directive_index<=directive_count; directive_index++) {
         normalized=directives[directive_index]
@@ -1098,18 +1166,37 @@ extract_nginx_domain_blocks() {
         field_count=split(normalized, fields, /[[:space:]]+/)
         for (field_index=1; field_index<=field_count; field_index++) {
           if (fields[field_index] == "server_name") {
-            while (++field_index <= field_count && fields[field_index] != "") {
-              if (fields[field_index] == domain) matched=1
+            for (scan_index=field_index+1; scan_index<=field_count; scan_index++) {
+              if (fields[scan_index] == domain) matched=1
             }
-            break
+          } else if (fields[field_index] == "listen") {
+            endpoint=fields[field_index+1]
+            if (endpoint ~ /(^|:)443$/) {
+              has_443=1
+              for (scan_index=field_index+2; scan_index<=field_count; scan_index++) {
+                if (fields[scan_index] == "ssl") has_443_ssl=1
+              }
+            }
+            if (endpoint ~ /(^|:)80$/) has_http=1
+            for (scan_index=field_index+2; scan_index<=field_count; scan_index++) {
+              if (fields[scan_index] == "ssl") has_any_ssl=1
+            }
+          } else if (fields[field_index] == "ssl_certificate") {
+            has_cert=1
+          } else if (fields[field_index] == "ssl_certificate_key") {
+            has_key=1
           }
         }
       }
-    }
-    function emit_block() {
-      if (matched) print block
-      block=""
-      matched=0
+      if (!matched) return
+      if (has_443 || has_any_ssl || has_cert || has_key) {
+        if (has_443 && has_443_ssl && has_cert && has_key) print "HTTPS"
+        else print "TLS_INCOMPLETE"
+      } else if (has_http) {
+        print "HTTP"
+      } else {
+        print "NO_LISTEN"
+      }
     }
     {
       line=$0
@@ -1117,17 +1204,14 @@ extract_nginx_domain_blocks() {
       if (!inside && line ~ /^[[:space:]]*server[[:space:]]*\{/) {
         inside=1
         block=line
-        matched=0
-        inspect_server_name(line)
         depth=brace_delta(line)
-        if (depth == 0) { emit_block(); inside=0 }
+        if (depth == 0) { classify_block(block); block=""; inside=0 }
         next
       }
       if (inside) {
         block=block "\n" line
-        inspect_server_name(line)
         depth+=brace_delta(line)
-        if (depth == 0) { emit_block(); inside=0 }
+        if (depth == 0) { classify_block(block); block=""; inside=0 }
       }
     }
     END { if (inside) exit 42 }
@@ -1135,29 +1219,36 @@ extract_nginx_domain_blocks() {
 }
 
 detect_target_scheme() {
-  local domain="$1" file blocks config='' has_443=0 has_ssl=0 has_cert=0 has_http=0
+  local domain="$1" file statuses block_status
+  local has_https=0 has_http=0 has_incomplete=0 matching_blocks=0
   local nginx_files=()
   mapfile -t nginx_files < <(find_nginx_files "$domain")
   ((${#nginx_files[@]} > 0)) || { err "未找到目标域名 Nginx 配置：$domain"; return 1; }
   for file in "${nginx_files[@]}"; do
-    if ! blocks="$(extract_nginx_domain_blocks "$file" "$domain")"; then
+    if ! statuses="$(classify_nginx_domain_blocks "$file" "$domain")"; then
       err "目标域名的 Nginx server 块无法解析：$file"
       return 1
     fi
-    [[ -z "$blocks" ]] || config+="$blocks"$'\n'
+    while IFS= read -r block_status; do
+      [[ -n "$block_status" ]] || continue
+      ((matching_blocks+=1))
+      case "$block_status" in
+        HTTPS) has_https=1 ;;
+        HTTP) has_http=1 ;;
+        TLS_INCOMPLETE) has_incomplete=1 ;;
+        NO_LISTEN) ;;
+        *) err 'Nginx server 块分类结果异常。'; return 1 ;;
+      esac
+    done <<< "$statuses"
   done
-  [[ -n "$config" ]] || { err "未找到目标域名的有效 Nginx server 块：$domain"; return 1; }
-  grep -Eq '(^|[;{}[:space:]])listen[[:space:]]+([^;[:space:]]*:)?443([[:space:];]|$)' <<< "$config" && has_443=1
-  grep -Eq '(^|[;{}[:space:]])listen[[:space:]]+[^;]*[[:space:]]ssl([[:space:];]|$)' <<< "$config" && has_ssl=1
-  grep -Eq '(^|[;{}[:space:]])ssl_certificate(_key)?[[:space:]]+' <<< "$config" && has_cert=1
-  grep -Eq '(^|[;{}[:space:]])listen[[:space:]]+([^;[:space:]]*:)?80([[:space:];]|$)' <<< "$config" && has_http=1
-  if ((has_443 || has_ssl || has_cert)); then
-    if ((has_443 && has_ssl && has_cert)); then
-      printf 'https'
-      return 0
-    fi
+  ((matching_blocks > 0)) || { err "未找到目标域名的有效 Nginx server 块：$domain"; return 1; }
+  if ((has_incomplete)); then
     err "目标域名的 HTTPS 配置不完整或存在冲突：$domain"
     return 1
+  fi
+  if ((has_https)); then
+    printf 'https'
+    return 0
   fi
   if ((has_http)); then
     printf 'http'
@@ -1165,6 +1256,89 @@ detect_target_scheme() {
   fi
   err "无法从 Nginx 配置确定目标协议：$domain"
   return 1
+}
+
+get_target_server_identity() {
+  local host machine_id_file='' machine_fingerprint
+  host="$(hostname -f 2>/dev/null || hostname 2>/dev/null || true)"
+  [[ -n "$host" ]] || { err '无法读取目标服务器主机名。'; return 1; }
+  if [[ -s /etc/machine-id ]]; then
+    machine_id_file=/etc/machine-id
+  elif [[ -s /var/lib/dbus/machine-id ]]; then
+    machine_id_file=/var/lib/dbus/machine-id
+  else
+    err '无法读取目标服务器 machine-id，拒绝建立迁移目标身份。'
+    return 1
+  fi
+  machine_fingerprint="$(sha256sum "$machine_id_file" | awk '{print substr($1, 1, 16)}')"
+  [[ "$machine_fingerprint" =~ ^[0-9a-f]{16}$ ]] || { err '目标服务器 machine-id 指纹生成失败。'; return 1; }
+  printf '%s / machine:%s' "$host" "$machine_fingerprint"
+}
+
+nginx_target_config_fingerprint() {
+  local domain="$1" file
+  local files=()
+  mapfile -t files < <(find_nginx_files "$domain" | sort)
+  ((${#files[@]} > 0)) || return 1
+  {
+    for file in "${files[@]}"; do
+      printf '%s\n' "$file"
+      sha256sum "$file"
+    done
+  } | sha256sum | awk '{print $1}'
+}
+
+capture_migration_target_identity() {
+  local domain="$1" wp_config="$2" scheme="$3" migration_prefix="$4"
+  local server_identity target_prefix config_real root_state config_hash nginx_hash db_endpoint identity_record
+  validate_migration_target_scope "$domain" "$wp_config" || return 1
+  target_prefix="$(validate_wp_table_prefix "$wp_config" '目标 WordPress 配置')" || return 1
+  [[ "$migration_prefix" =~ ^[A-Za-z0-9_]+$ ]] || { err '迁移表前缀不合法。'; return 1; }
+  server_identity="$(get_target_server_identity)" || return 1
+  config_real="$(realpath -e -- "$wp_config")" || return 1
+  root_state="$(stat -c '%d:%i:%u:%g' "$MIGRATION_TARGET_WP_ROOT")" || return 1
+  config_hash="$(sha256sum "$config_real" | awk '{print $1}')" || return 1
+  nginx_hash="$(nginx_target_config_fingerprint "$domain")" || { err '目标 Nginx 配置指纹生成失败。'; return 1; }
+  db_endpoint="${DB_CONTAINER:+docker:$DB_CONTAINER|}${DB_HOST}|${DB_CONNECT_ARGS[*]}"
+  identity_record="$(printf '%s\n' \
+    "server=$server_identity" \
+    "domain=$domain" \
+    "scheme=$scheme" \
+    "wordpress_root=$MIGRATION_TARGET_WP_ROOT" \
+    "root_state=$root_state" \
+    "wp_config=$config_real" \
+    "wp_config_sha256=$config_hash" \
+    "db_endpoint=$db_endpoint" \
+    "db_user=$DB_USER" \
+    "db_name=$DB_NAME" \
+    "target_table_prefix=$target_prefix" \
+    "migration_table_prefix=$migration_prefix" \
+    "nginx_sha256=$nginx_hash")"
+  MIGRATION_TARGET_IDENTITY="$(printf '%s' "$identity_record" | sha256sum | awk '{print $1}')"
+  MIGRATION_TARGET_SERVER="$server_identity"
+  MIGRATION_TARGET_DOMAIN="$domain"
+  MIGRATION_TARGET_SCHEME="$scheme"
+  MIGRATION_TARGET_DB_ENDPOINT="$db_endpoint"
+  MIGRATION_TARGET_DB_NAME="$DB_NAME"
+  MIGRATION_TARGET_DB_USER="$DB_USER"
+  MIGRATION_TARGET_ORIGINAL_PREFIX="$target_prefix"
+  MIGRATION_TARGET_MIGRATION_PREFIX="$migration_prefix"
+  MIGRATION_TARGET_CONFIG_REAL="$config_real"
+}
+
+revalidate_migration_target_identity() {
+  local domain="$1" expected_identity="$2" migration_prefix="$3"
+  local wp_config scheme
+  wp_config="$(find_wp_config "$(site_path "$domain")")" || { err '重新验证时无法唯一确定目标 WordPress Root。'; return 1; }
+  validate_migration_target_scope "$domain" "$wp_config" || return 1
+  read_migration_db_config_file "$wp_config" || return 1
+  verify_empty_target_database || return 1
+  scheme="$(detect_target_scheme "$domain")" || return 1
+  capture_migration_target_identity "$domain" "$wp_config" "$scheme" "$migration_prefix" || return 1
+  if [[ "$MIGRATION_TARGET_IDENTITY" != "$expected_identity" ]]; then
+    err '目标身份或操作范围在预检期间发生变化，已停止。'
+    return 1
+  fi
 }
 
 restore_site() (
@@ -1486,7 +1660,7 @@ snapshots_menu() {
 migration_preflight() (
   umask 077
   local mode="$1" archive target_domain target_dir target_wp_config target_wp_root target_scheme target_url
-  local tmp='' status=0 target_owner
+  local tmp='' status=0 target_owner locked_identity archive_sha256
   case "$mode" in
     change-domain|keep-domain) ;;
     *) err '未知迁移模式。'; return 1 ;;
@@ -1504,7 +1678,7 @@ migration_preflight() (
   ' EXIT
 
   migration_log INFO '阶段二只执行只读预检和临时暂存，不修改目标站点或数据库。'
-  need_cmd tar gzip awk sed grep find cut realpath readlink dirname stat cp mv chmod mktemp
+  need_cmd tar gzip awk sed grep find cut realpath readlink dirname stat cp mv chmod mktemp hostname sha256sum sort
   archive="$(select_backup '' backup 迁移)" || {
     migration_log INFO '用户取消了备份选择。'
     return 0
@@ -1518,7 +1692,8 @@ migration_preflight() (
     migration_log ERROR '普通备份结构或内容预检失败。'
     return 1
   fi
-  migration_log INFO "备份预检通过；源域名=$MIGRATION_SOURCE_DOMAIN；源数据库=$MIGRATION_SOURCE_DB"
+  archive_sha256="$(sha256sum "$archive" | awk '{print $1}')"
+  migration_log INFO "备份预检通过；源域名=$MIGRATION_SOURCE_DOMAIN；源数据库=$MIGRATION_SOURCE_DB；迁移表前缀=$MIGRATION_SOURCE_TABLE_PREFIX；备份指纹=$archive_sha256"
 
   target_domain="$(select_existing_domain '请选择已预建的空 WordPress 目标站点')" || {
     migration_log INFO '用户取消了目标站点选择。'
@@ -1544,6 +1719,11 @@ migration_preflight() (
   target_scheme="$(detect_target_scheme "$target_domain")" || { migration_log ERROR '目标 Nginx 协议检查失败。'; return 1; }
   target_url="${target_scheme}://${target_domain}"
   target_owner="$(stat -c '%u:%g' "$target_wp_root")" || { err '无法读取目标 WordPress Root 属主。'; migration_log ERROR '目标属主检查失败。'; return 1; }
+  capture_migration_target_identity "$target_domain" "$target_wp_config" "$target_scheme" "$MIGRATION_SOURCE_TABLE_PREFIX" || {
+    migration_log ERROR '无法建立完整的迁移目标身份。'
+    return 1
+  }
+  locked_identity="$MIGRATION_TARGET_IDENTITY"
 
   prepare_migration_stage "$MIGRATION_SOURCE_WP_ROOT" "$target_wp_config" "$tmp/staged-wordpress" || {
     migration_log ERROR 'WordPress Root 暂存构建失败。'
@@ -1554,8 +1734,12 @@ migration_preflight() (
     migration_log ERROR '暂存配置目标数据库复核失败。'
     return 1
   }
+  revalidate_migration_target_identity "$target_domain" "$locked_identity" "$MIGRATION_SOURCE_TABLE_PREFIX" || {
+    migration_log ERROR '暂存完成后的目标身份重新验证失败。'
+    return 1
+  }
 
-  migration_log INFO "目标预检通过；目标域名=$target_domain；目标协议=$target_scheme；目标属主=$target_owner"
+  migration_log INFO "目标预检通过；服务器=$MIGRATION_TARGET_SERVER；目标域名=$target_domain；目标协议=$target_scheme；目标属主=$target_owner；数据库=$MIGRATION_TARGET_DB_NAME；目标身份=$locked_identity"
   migration_log INFO '阶段二暂存构建完成；没有导入数据库或替换目标文件。'
   header
   printf '%s迁移预检结果%s\n\n' "$BOLD" "$RESET"
@@ -1563,9 +1747,14 @@ migration_preflight() (
   printf '%s普通备份：%s%s%s\n' "$NUMBER" "$BLUE" "${archive##*/}" "$RESET"
   printf '%s源域名：%s%s%s\n' "$NUMBER" "$BLUE" "$MIGRATION_SOURCE_DOMAIN" "$RESET"
   printf '%s目标域名：%s%s%s\n' "$NUMBER" "$BLUE" "$target_domain" "$RESET"
+  printf '%s目标服务器：%s%s%s\n' "$NUMBER" "$BLUE" "$MIGRATION_TARGET_SERVER" "$RESET"
   printf '%s目标 WordPress Root：%s%s%s\n' "$NUMBER" "$BLUE" "$target_wp_root" "$RESET"
-  printf '%s目标数据库：%s%s%s\n' "$NUMBER" "$BLUE" "$DB_NAME" "$RESET"
-  printf '%s目标网址：%s%s%s\n\n' "$NUMBER" "$BLUE" "$target_url" "$RESET"
+  printf '%s数据库连接：%s%s%s\n' "$NUMBER" "$BLUE" "$MIGRATION_TARGET_DB_ENDPOINT" "$RESET"
+  printf '%s目标数据库：%s%s%s\n' "$NUMBER" "$BLUE" "$MIGRATION_TARGET_DB_NAME" "$RESET"
+  printf '%s目标原表前缀：%s%s%s\n' "$NUMBER" "$BLUE" "$MIGRATION_TARGET_ORIGINAL_PREFIX" "$RESET"
+  printf '%s迁移表前缀：%s%s%s\n' "$NUMBER" "$BLUE" "$MIGRATION_TARGET_MIGRATION_PREFIX" "$RESET"
+  printf '%s目标网址：%s%s%s\n' "$NUMBER" "$BLUE" "$target_url" "$RESET"
+  printf '%s目标身份指纹：%s%s%s\n\n' "$NUMBER" "$BLUE" "$locked_identity" "$RESET"
   ok '阶段二预检和临时暂存已通过。'
   warn '当前阶段未导入数据库、未替换目标文件，也未修改 Nginx 或 SSL。'
   ok "迁移日志已保存：$MIGRATION_LOG_FILE"
