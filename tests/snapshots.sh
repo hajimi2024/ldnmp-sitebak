@@ -22,11 +22,11 @@ run_mysql() {
   cat > "$fixture/db-state"
 }
 mkdir -p "$SITE_ROOT/example.com/wordpress" "$BACKUP_DIR" "$fixture/conf" "$fixture/certs"
-printf "<?php\ndefine('DB_NAME', 'fixture_db');\ndefine('DB_USER', 'fixture_user');\ndefine('DB_PASSWORD', 'fixture_password');\ndefine('DB_HOST', 'mysql');\n" > "$SITE_ROOT/example.com/wordpress/wp-config.php"
+printf "<?php\ndefine('DB_NAME', 'fixture_db');\ndefine('DB_USER', 'fixture_user');\ndefine('DB_PASSWORD', 'fixture_password');\ndefine('DB_HOST', 'mysql');\n\$table_prefix = 'wp_';\n" > "$SITE_ROOT/example.com/wordpress/wp-config.php"
 state() {
   printf '%s\n' "$1" > "$SITE_ROOT/example.com/wordpress/index.php"
   printf "SELECT '%s';\n" "$1" > "$fixture/db-state"
-  printf '# %s\nserver_name example.com;\nssl_certificate %s/certs/example.com_cert.pem;\n' "$1" "$fixture" > "$fixture/conf/example.com.conf"
+  printf '# %s\nserver {\n  listen 443 ssl;\n  server_name example.com;\n  ssl_certificate %s/certs/example.com_cert.pem;\n  ssl_certificate_key %s/certs/example.com_key.pem;\n}\n' "$1" "$fixture" "$fixture" > "$fixture/conf/example.com.conf"
   printf '%s\n' "$1" > "$fixture/certs/example.com_cert.pem"
 }
 assert_state() {
@@ -47,9 +47,20 @@ state A
 backup_site example.com > "$fixture/backup.log" 2>&1
 backup="$BACKUP_DIR/example.com_${stamp}.tar.gz"
 state B
+expect_failure restore_site "$backup" < <(printf 'YES\n')
+assert_state B
+expect_failure restore_site "$backup" '' other.example
+assert_state B
 stamp=20260912_100100
 restore_site "$backup" < <(printf 'yes\ny\n') > "$fixture/restore.log" 2>&1
 assert_state A
+grep -Fq '操作类型：站点还原' "$fixture/restore.log"
+grep -Fq '源站域名：example.com' "$fixture/restore.log"
+grep -Fq '目标域名：example.com' "$fixture/restore.log"
+grep -Fq '目标网址：https://example.com' "$fixture/restore.log"
+grep -Fq '目标 WordPress Root：' "$fixture/restore.log"
+grep -Fq '目标数据库：fixture_db' "$fixture/restore.log"
+grep -Fq '🚨 警告：即将写入目标网站文件及数据库。' "$fixture/restore.log"
 snapshot="$BACKUP_DIR/example.com_snapshot_${stamp}.tar.gz"
 [[ -f "$snapshot" ]]
 mkdir "$fixture/payload"
@@ -125,4 +136,20 @@ delete_backup_menu snapshots < <(printf '1\nno\n') > "$fixture/cancel-delete.log
 delete_backup_menu snapshots < <(printf '1\nyes\n') > "$fixture/delete.log" 2>&1
 [[ $(list_backups_for_domain example.com snapshots | wc -l) == 2 ]]
 [[ -z $(find "$BACKUP_DIR" -name '.sitebak.*' -print -quit) ]]
+
+# A target configuration changed after yes must stop before file or database writes.
+state C
+TAMPER_TARGET_CONFIG_ON_CONFIRM=yes
+ui_read() {
+  local variable="$1" output_fd="${2:-1}" status
+  if IFS= read -r "$variable"; then status=0; else status=$?; fi
+  printf '%s' "$RESET" >&"$output_fd"
+  if [[ "$variable" == confirm && "$TAMPER_TARGET_CONFIG_ON_CONFIRM" == yes ]]; then
+    sed -i "s/define('DB_NAME', 'fixture_db')/define('DB_NAME', 'changed_fixture_db')/" "$SITE_ROOT/example.com/wordpress/wp-config.php"
+  fi
+  return "$status"
+}
+expect_failure restore_site "$backup" < <(printf 'yes\n')
+grep -Fq '目标身份或操作范围在预检期间发生变化' "$fixture/failure.log"
+[[ $(< "$SITE_ROOT/example.com/wordpress/index.php") == C ]]
 printf 'PASS: complete snapshots, protected restore, rollback, legacy filtering, validation, menus and deletion\n'

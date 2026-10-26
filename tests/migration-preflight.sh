@@ -30,6 +30,7 @@ prepare_db_client() {
   DB_CONNECT_ARGS=(-h 127.0.0.1 --protocol=TCP -P 3306)
 }
 get_target_server_identity() { printf '%s' "$fixture_server_identity"; }
+get_target_server_username() { printf '%s' fixture-user; }
 run_mysqldump() { printf '%s\n' 'CREATE TABLE `wp_options` (`option_id` bigint);'; }
 run_mysql() {
   printf '%s' "$db_tables"
@@ -135,6 +136,8 @@ fi
 grep -Fq '阶段二预检和临时暂存已通过' "$fixture/change-output"
 grep -Fq 'https://target.example' "$fixture/change-output"
 grep -Fq '目标服务器：target-vps / machine:0123456789abcdef' "$fixture/change-output"
+grep -Fq '用户：fixture-user' "$fixture/change-output"
+grep -Fq '迁移模式：更换域名迁移' "$fixture/change-output"
 grep -Fq '目标原表前缀：target_' "$fixture/change-output"
 grep -Fq '迁移表前缀：source_' "$fixture/change-output"
 grep -Eq '目标身份指纹：[0-9a-f]{64}' "$fixture/change-output"

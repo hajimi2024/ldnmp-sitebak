@@ -1275,6 +1275,13 @@ get_target_server_identity() {
   printf '%s / machine:%s' "$host" "$machine_fingerprint"
 }
 
+get_target_server_username() {
+  local username
+  username="$(id -un 2>/dev/null || true)"
+  [[ -n "$username" ]] || { err '无法读取当前服务器用户名。'; return 1; }
+  printf '%s' "$username"
+}
+
 nginx_target_config_fingerprint() {
   local domain="$1" file
   local files=()
@@ -1290,11 +1297,12 @@ nginx_target_config_fingerprint() {
 
 capture_migration_target_identity() {
   local domain="$1" wp_config="$2" scheme="$3" migration_prefix="$4"
-  local server_identity target_prefix config_real root_state config_hash nginx_hash db_endpoint identity_record
+  local server_identity server_username target_prefix config_real root_state config_hash nginx_hash db_endpoint identity_record
   validate_migration_target_scope "$domain" "$wp_config" || return 1
   target_prefix="$(validate_wp_table_prefix "$wp_config" '目标 WordPress 配置')" || return 1
   [[ "$migration_prefix" =~ ^[A-Za-z0-9_]+$ ]] || { err '迁移表前缀不合法。'; return 1; }
   server_identity="$(get_target_server_identity)" || return 1
+  server_username="$(get_target_server_username)" || return 1
   config_real="$(realpath -e -- "$wp_config")" || return 1
   root_state="$(stat -c '%d:%i:%u:%g' "$MIGRATION_TARGET_WP_ROOT")" || return 1
   config_hash="$(sha256sum "$config_real" | awk '{print $1}')" || return 1
@@ -1302,6 +1310,7 @@ capture_migration_target_identity() {
   db_endpoint="${DB_CONTAINER:+docker:$DB_CONTAINER|}${DB_HOST}|${DB_CONNECT_ARGS[*]}"
   identity_record="$(printf '%s\n' \
     "server=$server_identity" \
+    "server_username=$server_username" \
     "domain=$domain" \
     "scheme=$scheme" \
     "wordpress_root=$MIGRATION_TARGET_WP_ROOT" \
@@ -1316,6 +1325,7 @@ capture_migration_target_identity() {
     "nginx_sha256=$nginx_hash")"
   MIGRATION_TARGET_IDENTITY="$(printf '%s' "$identity_record" | sha256sum | awk '{print $1}')"
   MIGRATION_TARGET_SERVER="$server_identity"
+  MIGRATION_TARGET_SERVER_USERNAME="$server_username"
   MIGRATION_TARGET_DOMAIN="$domain"
   MIGRATION_TARGET_SCHEME="$scheme"
   MIGRATION_TARGET_DB_ENDPOINT="$db_endpoint"
@@ -1326,13 +1336,18 @@ capture_migration_target_identity() {
   MIGRATION_TARGET_CONFIG_REAL="$config_real"
 }
 
-revalidate_migration_target_identity() {
-  local domain="$1" expected_identity="$2" migration_prefix="$3"
+revalidate_target_identity() {
+  local domain="$1" expected_identity="$2" migration_prefix="$3" require_empty_database="${4:-no}"
   local wp_config scheme
   wp_config="$(find_wp_config "$(site_path "$domain")")" || { err '重新验证时无法唯一确定目标 WordPress Root。'; return 1; }
   validate_migration_target_scope "$domain" "$wp_config" || return 1
   read_migration_db_config_file "$wp_config" || return 1
-  verify_empty_target_database || return 1
+  if [[ "$require_empty_database" == yes ]]; then
+    verify_empty_target_database || return 1
+  else
+    prepare_db_client mysql || return 1
+    run_mysql --batch --skip-column-names -e 'SELECT 1' "$DB_NAME" >/dev/null || { err '无法重新验证目标数据库连接。'; return 1; }
+  fi
   scheme="$(detect_target_scheme "$domain")" || return 1
   capture_migration_target_identity "$domain" "$wp_config" "$scheme" "$migration_prefix" || return 1
   if [[ "$MIGRATION_TARGET_IDENTITY" != "$expected_identity" ]]; then
@@ -1341,10 +1356,48 @@ revalidate_migration_target_identity() {
   fi
 }
 
+revalidate_migration_target_identity() {
+  revalidate_target_identity "$1" "$2" "$3" yes
+}
+
+revalidate_restore_target_identity() {
+  revalidate_target_identity "$1" "$2" "$3" no
+}
+
+operation_type_label() {
+  case "$1" in
+    restore) printf '站点还原' ;;
+    snapshot-restore) printf '完整快照还原' ;;
+    change-domain) printf '更换域名迁移' ;;
+    keep-domain) printf '保留域名迁移' ;;
+    *) return 1 ;;
+  esac
+}
+
+confirm_target_operation() {
+  local operation="$1" source_domain="$2" target_domain="$3" target_url="$4" server_identity="$5" server_username="$6"
+  local target_root="$7" database_name="$8" archive="$9" confirm
+  header
+  printf '%s即将执行站点操作，请核对：%s\n\n' "$BOLD" "$RESET"
+  printf '%s操作类型：%s%s%s\n' "$NUMBER" "$BLUE" "$(operation_type_label "$operation")" "$RESET"
+  printf '%s源站域名：%s%s%s\n' "$NUMBER" "$BLUE" "$source_domain" "$RESET"
+  printf '%s目标域名：%s%s%s\n' "$NUMBER" "$BLUE" "$target_domain" "$RESET"
+  printf '%s目标网址：%s%s%s\n' "$NUMBER" "$BLUE" "$target_url" "$RESET"
+  printf '%s目标服务器：%s%s%s（用户：%s）\n' "$NUMBER" "$BLUE" "$server_identity" "$RESET" "$server_username"
+  printf '%s目标 WordPress Root：%s%s%s\n' "$NUMBER" "$BLUE" "$target_root" "$RESET"
+  printf '%s目标数据库：%s%s%s\n' "$NUMBER" "$BLUE" "$database_name" "$RESET"
+  printf '%s备份文件：%s%s%s\n\n' "$NUMBER" "$BLUE" "${archive##*/}" "$RESET"
+  printf '%s🚨 警告：即将写入目标网站文件及数据库。%s\n\n' "$RED" "$RESET"
+  ui_prompt '请输入 yes 确认：'
+  ui_read confirm || return 1
+  [[ "$confirm" == yes ]] || { warn '已取消操作。'; return 1; }
+}
+
 restore_site() (
   umask 077
   local archive="$1"
   local expected_type="${2:-}"
+  local requested_domain="${3:-}"
   if [[ "$(archive_kind "$archive" || true)" == legacy ]]; then
     err "这是旧版文件快照，不含数据库，不能用于完整站点恢复。"
     return 1
@@ -1354,22 +1407,42 @@ restore_site() (
     return 1
   fi
 
-  need_cmd tar gzip awk sed find date
+  need_cmd tar gzip awk sed find date realpath readlink stat sha256sum id
 
-  local tmp manifest domain db_name target_dir component count snapshot_choice payload
+  local tmp manifest domain db_name target_dir component count snapshot_choice payload wp_config target_wp_config target_wp_root
+  local archive_type archive_kind_value archive_domain source_db_name source_prefix target_scheme target_url
+  local source_db_user source_db_password source_db_host target_exists=no locked_identity='' post_file_identity='' server_identity server_username archive_sha256
   tmp="$(mktemp -d "/tmp/sitebak.restore.XXXXXX")"
   trap 'rm -rf -- "$tmp"' EXIT
 
-  tar -C "$tmp" -xzf "$archive"
+  extract_safe_tar "$archive" "$tmp" '备份包' no || return 1
   manifest="$tmp/manifest.json"
   if [[ ! -f "$manifest" ]]; then
     err "备份包缺少 manifest.json，无法安全恢复。"
     return 1
   fi
-  if [[ "$expected_type" == snapshot && "$(extract_manifest_value "$manifest" archive_type)" != snapshot ]]; then
-    err "所选文件不是新版完整快照。"
+  archive_type="$(manifest_string_once "$manifest" archive_type)" || return 1
+  domain="$(manifest_string_once "$manifest" domain)" || return 1
+  db_name="$(manifest_string_once "$manifest" db_name)" || return 1
+  [[ "$(manifest_string_once "$manifest" tool)" == sitebak ]] || { err '所选文件不是 SiteBak 备份。'; return 1; }
+  if [[ "$expected_type" == snapshot ]]; then
+    [[ "$archive_type" == snapshot ]] || { err '所选文件不是新版完整快照。'; return 1; }
+  else
+    [[ "$archive_type" == backup ]] || { err '站点还原只能使用普通备份。'; return 1; }
+  fi
+  archive_kind_value="$(archive_kind "$archive" || true)"
+  [[ "$archive_kind_value" == "$archive_type" ]] || { err '备份文件名类型与 manifest 不一致。'; return 1; }
+  if [[ "$archive_type" == snapshot && "${archive##*/}" =~ ^(.+)_snapshot_[0-9]{8}_[0-9]{6}\.tar\.gz$ ]]; then
+    archive_domain="${BASH_REMATCH[1]}"
+  elif [[ "$archive_type" == backup && "${archive##*/}" =~ ^(.+)_[0-9]{8}_[0-9]{6}\.tar\.gz$ ]]; then
+    archive_domain="${BASH_REMATCH[1]}"
+  else
+    err '备份文件名不合法。'
     return 1
   fi
+  valid_domain "$domain" || { err "备份包中的域名不合法：$domain"; return 1; }
+  [[ "$archive_domain" == "$domain" ]] || { err '备份文件名与 manifest 域名不一致。'; return 1; }
+  [[ -z "$requested_domain" || "$requested_domain" == "$domain" ]] || { err '用户选定域名与备份 manifest 域名不一致。'; return 1; }
   for component in nginx certs; do
     case "$component" in
       nginx) count="$(sed -n 's/.*"nginx_files": *\([0-9][0-9]*\).*/\1/p' "$manifest")"; payload="$tmp/nginx/nginx-files.tar.gz" ;;
@@ -1381,36 +1454,75 @@ restore_site() (
     [[ ! -f "$payload" ]] || tar -tzf "$payload" >/dev/null
   done
 
-  domain="$(extract_manifest_value "$manifest" "domain")"
-  db_name="$(extract_manifest_value "$manifest" "db_name")"
   target_dir="$(site_path "$domain")"
-
-  if ! valid_domain "$domain"; then
-    err "备份包中的域名不合法：$domain"
-    return 1
-  fi
 
   if [[ ! "$db_name" =~ ^[A-Za-z0-9_-]+$ ]] || [[ ! -f "$tmp/database/${db_name}.sql.gz" ]]; then
     err "备份包数据库名称不合法或缺少 SQL 文件。"
     return 1
   fi
   gzip -t "$tmp/database/${db_name}.sql.gz"
-  mkdir -p "$tmp/staged-site"
-  tar -C "$tmp/staged-site" -xzf "$tmp/files/site-files.tar.gz"
-  local wp_config
+  extract_safe_tar "$tmp/files/site-files.tar.gz" "$tmp/staged-site" '站点文件包' yes || return 1
   wp_config="$(find_wp_config "$tmp/staged-site")" || { err "备份包中无法唯一确定 WordPress 配置。"; return 1; }
-  read_db_config_file "$wp_config"
-  [[ "$DB_NAME" == "$db_name" ]] || { err "备份清单与 WordPress 数据库名称不一致。"; return 1; }
+  validate_migration_wp_config "$wp_config" '备份 WordPress 配置' || return 1
+  source_db_name="$(parse_migration_wp_define "$wp_config" DB_NAME)"
+  source_db_user="$(parse_migration_wp_define "$wp_config" DB_USER)"
+  source_db_password="$(parse_migration_wp_define "$wp_config" DB_PASSWORD)"
+  source_db_host="$(parse_migration_wp_define "$wp_config" DB_HOST)"
+  source_prefix="$(validate_wp_table_prefix "$wp_config" '备份 WordPress 配置')" || return 1
+  [[ "$source_db_name" == "$db_name" ]] || { err "备份清单与 WordPress 数据库名称不一致。"; return 1; }
+
+  if [[ -d "$target_dir" ]]; then
+    target_exists=yes
+    target_wp_config="$(find_wp_config "$target_dir")" || { err '无法唯一确定目标 WordPress Root。'; return 1; }
+    validate_migration_target_scope "$domain" "$target_wp_config" || return 1
+    target_wp_root="$MIGRATION_TARGET_WP_ROOT"
+    validate_migration_wp_config "$target_wp_config" '目标 WordPress 配置' || return 1
+    for component in DB_NAME DB_USER DB_PASSWORD DB_HOST; do
+      [[ "$(parse_migration_wp_define "$target_wp_config" "$component")" == "$(parse_migration_wp_define "$wp_config" "$component")" ]] || {
+        err "目标 WordPress 配置的 $component 与备份不一致。"
+        return 1
+      }
+    done
+    [[ "$(validate_wp_table_prefix "$target_wp_config" '目标 WordPress 配置')" == "$source_prefix" ]] || { err '目标 WordPress 配置的 table_prefix 与备份不一致。'; return 1; }
+    read_migration_db_config_file "$target_wp_config" || return 1
+  else
+    local site_root_real target_parent source_root_relative
+    site_root_real="$(realpath -e -- "$SITE_ROOT")" || { err '无法解析站点目录。'; return 1; }
+    target_parent="$(realpath -e -- "$(dirname -- "$target_dir")")" || { err '无法解析目标域名父目录。'; return 1; }
+    [[ "$target_parent" == "$site_root_real" ]] || { err '目标域名目录超出站点目录。'; return 1; }
+    source_root_relative="$(dirname -- "${wp_config#"$tmp/staged-site/"}")"
+    target_wp_root="$target_dir"
+    [[ "$source_root_relative" == . ]] || target_wp_root="$target_dir/$source_root_relative"
+    DB_NAME="$source_db_name"
+    DB_USER="$source_db_user"
+    DB_PASSWORD="$source_db_password"
+    DB_HOST="$source_db_host"
+  fi
+
   prepare_db_client mysql
   run_mysql --batch --skip-column-names -e 'SELECT 1' >/dev/null
+  target_scheme="$(detect_target_scheme "$domain")" || { err '无法确定目标网址协议，已停止恢复。'; return 1; }
+  target_url="${target_scheme}://${domain}"
+  archive_sha256="$(sha256sum "$archive" | awk '{print $1}')"
+  if [[ "$target_exists" == yes ]]; then
+    capture_migration_target_identity "$domain" "$target_wp_config" "$target_scheme" "$source_prefix" || return 1
+    locked_identity="$MIGRATION_TARGET_IDENTITY"
+    server_identity="$MIGRATION_TARGET_SERVER"
+    server_username="$MIGRATION_TARGET_SERVER_USERNAME"
+  else
+    server_identity="$(get_target_server_identity)" || return 1
+    server_username="$(get_target_server_username)" || return 1
+  fi
 
-  header
-  warn "即将恢复站点：$domain"
-  printf '%s备份文件：%s%s\n' "$BLUE" "$archive" "$RESET"
-  printf '%s目标目录：%s%s\n\n' "$BLUE" "$target_dir" "$RESET"
-  ui_prompt '恢复会覆盖当前站点文件，并导入数据库。是否继续？请输入 yes 确认：'
-  ui_read confirm || return 1
-  [[ "$confirm" == "yes" ]] || { warn "已取消恢复。"; return 1; }
+  confirm_target_operation "${expected_type:+snapshot-}restore" "$domain" "$domain" "$target_url" "$server_identity" "$server_username" "$target_wp_root" "$db_name" "$archive" || return 1
+
+  [[ "$(sha256sum "$archive" | awk '{print $1}')" == "$archive_sha256" ]] || { err '确认后备份文件发生变化，已停止恢复。'; return 1; }
+  if [[ "$target_exists" == yes ]]; then
+    revalidate_restore_target_identity "$domain" "$locked_identity" "$source_prefix" || return 1
+  else
+    [[ ! -e "$target_dir" ]] || { err '确认后目标域名目录发生变化，已停止恢复。'; return 1; }
+    [[ "$(get_target_server_identity)" == "$server_identity" && "$(get_target_server_username)" == "$server_username" ]] || { err '确认后目标服务器身份发生变化，已停止恢复。'; return 1; }
+  fi
 
   if [[ -d "$target_dir" ]]; then
     while true; do
@@ -1428,18 +1540,29 @@ restore_site() (
     done
   fi
 
+  [[ "$(sha256sum "$archive" | awk '{print $1}')" == "$archive_sha256" ]] || { err '写入前备份文件发生变化，已停止恢复。'; return 1; }
+  if [[ "$target_exists" == yes ]]; then
+    revalidate_restore_target_identity "$domain" "$locked_identity" "$source_prefix" || return 1
+  else
+    [[ ! -e "$target_dir" ]] || { err '写入前目标域名目录发生变化，已停止恢复。'; return 1; }
+  fi
   mkdir -p "$target_dir"
   info "正在恢复站点文件及原始权限..."
   find "$target_dir" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +
   tar --numeric-owner --same-owner --same-permissions -C "$target_dir" -xzf "$tmp/files/site-files.tar.gz"
 
-  if find_wp_config "$target_dir" >/dev/null; then
-    read_db_config "$domain"
-  else
-    DB_NAME="$db_name"
-  fi
+  target_wp_config="$(find_wp_config "$target_dir")" || { err '恢复后无法唯一确定目标 WordPress Root。'; return 1; }
+  validate_migration_target_scope "$domain" "$target_wp_config" || return 1
+  [[ "$MIGRATION_TARGET_WP_ROOT" == "$target_wp_root" ]] || { err '恢复后目标 WordPress Root 与确认结果不一致。'; return 1; }
+  read_migration_db_config_file "$target_wp_config" || return 1
+  [[ "$DB_NAME" == "$db_name" && "$(validate_wp_table_prefix "$target_wp_config" '恢复后目标 WordPress 配置')" == "$source_prefix" ]] || { err '恢复后目标数据库或表前缀与确认结果不一致。'; return 1; }
+  prepare_db_client mysql
+  run_mysql --batch --skip-column-names -e 'SELECT 1' "$DB_NAME" >/dev/null || { err '导入前无法重新验证目标数据库连接。'; return 1; }
+  capture_migration_target_identity "$domain" "$target_wp_config" "$target_scheme" "$source_prefix" || return 1
+  post_file_identity="$MIGRATION_TARGET_IDENTITY"
 
   if [[ -f "$tmp/database/${db_name}.sql.gz" ]]; then
+    revalidate_restore_target_identity "$domain" "$post_file_identity" "$source_prefix" || return 1
     info "正在导入数据库：$db_name"
     run_mysql -e "CREATE DATABASE IF NOT EXISTS \`$db_name\` DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
     gzip -dc "$tmp/database/${db_name}.sql.gz" | run_mysql "$db_name"
@@ -1447,6 +1570,7 @@ restore_site() (
     warn "未找到数据库导出文件，跳过数据库导入。"
   fi
 
+  revalidate_restore_target_identity "$domain" "$post_file_identity" "$source_prefix" || return 1
   if [[ -f "$tmp/nginx/nginx-files.tar.gz" ]]; then
     info "正在恢复 Nginx 配置..."
     tar -xzf "$tmp/nginx/nginx-files.tar.gz" -C /
@@ -1623,7 +1747,7 @@ restore_menu() {
   # Scan current sites first, then limit the restore list to the chosen domain.
   domain="$(select_domain "请选择要恢复的站点")" || return 0
   archive="$(select_backup "$domain" backup)" || return 0
-  restore_site "$archive"
+  restore_site "$archive" '' "$domain"
 }
 
 create_snapshot_menu() {
@@ -1678,7 +1802,7 @@ migration_preflight() (
   ' EXIT
 
   migration_log INFO '阶段二只执行只读预检和临时暂存，不修改目标站点或数据库。'
-  need_cmd tar gzip awk sed grep find cut realpath readlink dirname stat cp mv chmod mktemp hostname sha256sum sort
+  need_cmd tar gzip awk sed grep find cut realpath readlink dirname stat cp mv chmod mktemp hostname sha256sum sort id
   archive="$(select_backup '' backup 迁移)" || {
     migration_log INFO '用户取消了备份选择。'
     return 0
@@ -1739,15 +1863,15 @@ migration_preflight() (
     return 1
   }
 
-  migration_log INFO "目标预检通过；服务器=$MIGRATION_TARGET_SERVER；目标域名=$target_domain；目标协议=$target_scheme；目标属主=$target_owner；数据库=$MIGRATION_TARGET_DB_NAME；目标身份=$locked_identity"
+  migration_log INFO "目标预检通过；服务器=$MIGRATION_TARGET_SERVER；用户=$MIGRATION_TARGET_SERVER_USERNAME；目标域名=$target_domain；目标协议=$target_scheme；目标属主=$target_owner；数据库=$MIGRATION_TARGET_DB_NAME；目标身份=$locked_identity"
   migration_log INFO '阶段二暂存构建完成；没有导入数据库或替换目标文件。'
   header
   printf '%s迁移预检结果%s\n\n' "$BOLD" "$RESET"
-  printf '%s迁移模式：%s%s%s\n' "$NUMBER" "$BLUE" "$mode" "$RESET"
+  printf '%s迁移模式：%s%s%s\n' "$NUMBER" "$BLUE" "$(operation_type_label "$mode")" "$RESET"
   printf '%s普通备份：%s%s%s\n' "$NUMBER" "$BLUE" "${archive##*/}" "$RESET"
   printf '%s源域名：%s%s%s\n' "$NUMBER" "$BLUE" "$MIGRATION_SOURCE_DOMAIN" "$RESET"
   printf '%s目标域名：%s%s%s\n' "$NUMBER" "$BLUE" "$target_domain" "$RESET"
-  printf '%s目标服务器：%s%s%s\n' "$NUMBER" "$BLUE" "$MIGRATION_TARGET_SERVER" "$RESET"
+  printf '%s目标服务器：%s%s%s（用户：%s）\n' "$NUMBER" "$BLUE" "$MIGRATION_TARGET_SERVER" "$RESET" "$MIGRATION_TARGET_SERVER_USERNAME"
   printf '%s目标 WordPress Root：%s%s%s\n' "$NUMBER" "$BLUE" "$target_wp_root" "$RESET"
   printf '%s数据库连接：%s%s%s\n' "$NUMBER" "$BLUE" "$MIGRATION_TARGET_DB_ENDPOINT" "$RESET"
   printf '%s目标数据库：%s%s%s\n' "$NUMBER" "$BLUE" "$MIGRATION_TARGET_DB_NAME" "$RESET"
@@ -1850,7 +1974,7 @@ main() {
         domain="$(sanitize_domain "$2")"
         valid_domain "$domain" || { err "域名格式不正确：$2"; exit 1; }
         archive="$(select_backup "$domain")" || exit 1
-        restore_site "$archive"
+        restore_site "$archive" '' "$domain"
       fi
       ;;
     list-backups)
@@ -1874,7 +1998,7 @@ main() {
         valid_domain "$domain" || { err "域名格式不正确：$2"; exit 1; }
         archive="$(select_backup "$domain" snapshot)" || exit 1
       fi
-      restore_site "$archive" snapshot
+      restore_site "$archive" snapshot "${domain:-}"
       ;;
     migrate)
       need_root

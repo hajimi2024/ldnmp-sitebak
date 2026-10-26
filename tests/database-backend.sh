@@ -5,7 +5,7 @@ fixture="$(mktemp -d)"
 trap 'rm -rf -- "$fixture"' EXIT
 SITE_ROOT="$fixture/html"
 BACKUP_DIR="$fixture/backups"
-NGINX_CONF_DIRS=()
+NGINX_CONF_DIRS=("$fixture/conf")
 CERT_DIRS=()
 clear_screen() { :; }
 reload_services() { :; }
@@ -117,8 +117,9 @@ MOCK_DUMP=missing
 expect_failure prepare_db_client dump
 MOCK_DUMP=mysqldump
 MOCK_CLIENT=mysql
-mkdir -p "$SITE_ROOT/example.com/wordpress" "$BACKUP_DIR"
-printf "<?php\ndefine('DB_NAME', 'fixture_db');\ndefine('DB_USER', 'fixture_user');\ndefine('DB_PASSWORD', 'fixture secret \$ with spaces');\ndefine('DB_HOST', 'mysql');\n" > "$SITE_ROOT/example.com/wordpress/wp-config.php"
+mkdir -p "$SITE_ROOT/example.com/wordpress" "$BACKUP_DIR" "$fixture/conf"
+printf "<?php\ndefine('DB_NAME', 'fixture_db');\ndefine('DB_USER', 'fixture_user');\ndefine('DB_PASSWORD', 'fixture secret \$ with spaces');\ndefine('DB_HOST', 'mysql');\n\$table_prefix = 'wp_';\n" > "$SITE_ROOT/example.com/wordpress/wp-config.php"
+printf 'server { listen 80; server_name example.com; }\n' > "$fixture/conf/example.com.conf"
 printf 'site content\n' > "$SITE_ROOT/example.com/wordpress/index.php"
 if [[ "${SITEBAK_TEST_OWNERSHIP:-0}" == 1 ]]; then
   [[ $EUID == 0 ]] || { printf 'Ownership test requires root\n' >&2; exit 1; }
