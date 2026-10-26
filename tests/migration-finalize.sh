@@ -120,7 +120,7 @@ DB_HOST=mysql
 DB_USER=target_user
 DB_PASSWORD=target_password
 DB_NAME=target_db
-prepare_wp_cli_environment "$fixture/mounted/example/wordpress" "$fixture" 
+prepare_wp_cli_environment "$fixture/mounted/example/wordpress" "$fixture"
 [[ "$WPCLI_CONTAINER" == php && "$WPCLI_CONTAINER_ROOT" == /var/www/html/example/wordpress ]]
 [[ "${WPCLI_COMMAND[*]}" == /usr/local/bin/wp ]]
 
