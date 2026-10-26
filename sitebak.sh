@@ -96,7 +96,7 @@ show_recent_migration_log() {
   local file latest='' modified latest_modified=''
   need_cmd find stat cat
   if [[ ! -d "$MIGRATION_LOG_DIR" ]]; then
-    warn '尚无迁移日志。'
+    warn '尚无操作日志。'
     return 0
   fi
   while IFS= read -r -d '' file; do
@@ -107,10 +107,10 @@ show_recent_migration_log() {
     fi
   done < <(find "$MIGRATION_LOG_DIR" -maxdepth 1 -type f -name 'migration_*.log' -print0 2>/dev/null)
   if [[ -z "$latest" ]]; then
-    warn '尚无迁移日志。'
+    warn '尚无操作日志。'
     return 0
   fi
-  info "最近一次迁移日志：$latest"
+  info "最近一次操作日志：$latest"
   printf '\n'
   cat -- "$latest"
 }
@@ -206,7 +206,7 @@ render_main_menu() {
   menu_row_gap
   menu_pair '7.  更新脚本' '' 12
   menu_separator
-  menu_item '8.  站点迁移 ♻️'; printf '\n'
+  menu_item '8.  站点导入 ♻️'; printf '\n'
   menu_separator
   menu_item '0.  退出'; printf '\n'
   menu_separator
@@ -224,11 +224,11 @@ render_snapshot_menu() {
 }
 
 render_migration_menu() {
-  printf '%s站点迁移%s\n' "$BOLD" "$RESET"
+  printf '%s站点导入%s\n' "$BOLD" "$RESET"
   menu_separator
-  menu_item '1.  更换域名迁移'; printf '\n'
-  menu_item '2.  保留域名迁移'; printf '\n'
-  menu_item '3.  查看最近一次迁移日志'; printf '\n'
+  menu_item '1.  导入并更换域名'; printf '\n'
+  menu_item '2.  导入并保留域名'; printf '\n'
+  menu_item '3.  查看最近一次操作日志'; printf '\n'
   printf '\n'
   menu_item '0.  返回上一级'; printf '\n'
   menu_separator
@@ -1017,7 +1017,7 @@ inspect_migration_archive() {
   local archive="$1" package_dir="$2" source_site_dir="$3"
   local manifest tool archive_type version created_at source_site_dir_record source_db_host filename_domain db_name wp_config source_db_name component count payload
   [[ -f "$archive" ]] || { err "备份文件不存在：$archive"; return 1; }
-  [[ "$(archive_kind "$archive" || true)" == backup ]] || { err '站点迁移只接受普通备份。'; return 1; }
+  [[ "$(archive_kind "$archive" || true)" == backup ]] || { err '站点导入只接受普通备份。'; return 1; }
 
   extract_safe_tar "$archive" "$package_dir" '外层备份包' no || return 1
   manifest="$package_dir/manifest.json"
@@ -1368,8 +1368,8 @@ operation_type_label() {
   case "$1" in
     restore) printf '站点还原' ;;
     snapshot-restore) printf '完整快照还原' ;;
-    change-domain) printf '更换域名迁移' ;;
-    keep-domain) printf '保留域名迁移' ;;
+    change-domain) printf '导入并更换域名' ;;
+    keep-domain) printf '导入并保留域名' ;;
     *) return 1 ;;
   esac
 }
@@ -1825,10 +1825,10 @@ migration_preflight() (
   }
   case "$mode" in
     change-domain)
-      [[ "$target_domain" != "$MIGRATION_SOURCE_DOMAIN" ]] || { err '更换域名迁移要求源域名与目标域名不同。'; migration_log ERROR '源域名与目标域名相同。'; return 1; }
+      [[ "$target_domain" != "$MIGRATION_SOURCE_DOMAIN" ]] || { err '导入并更换域名要求源域名与目标域名不同。'; migration_log ERROR '源域名与目标域名相同。'; return 1; }
       ;;
     keep-domain)
-      [[ "$target_domain" == "$MIGRATION_SOURCE_DOMAIN" ]] || { err '保留域名迁移要求源域名与目标域名完全一致。'; migration_log ERROR '源域名与目标域名不一致。'; return 1; }
+      [[ "$target_domain" == "$MIGRATION_SOURCE_DOMAIN" ]] || { err '导入并保留域名要求源域名与目标域名完全一致。'; migration_log ERROR '源域名与目标域名不一致。'; return 1; }
       ;;
   esac
 
@@ -1866,8 +1866,8 @@ migration_preflight() (
   migration_log INFO "目标预检通过；服务器=$MIGRATION_TARGET_SERVER；用户=$MIGRATION_TARGET_SERVER_USERNAME；目标域名=$target_domain；目标协议=$target_scheme；目标属主=$target_owner；数据库=$MIGRATION_TARGET_DB_NAME；目标身份=$locked_identity"
   migration_log INFO '阶段二暂存构建完成；没有导入数据库或替换目标文件。'
   header
-  printf '%s迁移预检结果%s\n\n' "$BOLD" "$RESET"
-  printf '%s迁移模式：%s%s%s\n' "$NUMBER" "$BLUE" "$(operation_type_label "$mode")" "$RESET"
+  printf '%s站点导入预检结果%s\n\n' "$BOLD" "$RESET"
+  printf '%s导入模式：%s%s%s\n' "$NUMBER" "$BLUE" "$(operation_type_label "$mode")" "$RESET"
   printf '%s普通备份：%s%s%s\n' "$NUMBER" "$BLUE" "${archive##*/}" "$RESET"
   printf '%s源域名：%s%s%s\n' "$NUMBER" "$BLUE" "$MIGRATION_SOURCE_DOMAIN" "$RESET"
   printf '%s目标域名：%s%s%s\n' "$NUMBER" "$BLUE" "$target_domain" "$RESET"

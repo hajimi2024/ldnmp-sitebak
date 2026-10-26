@@ -31,7 +31,7 @@ printf 'OLDER LOG MUST NOT BE SELECTED\n' > "$older_log"
 chmod 0600 "$older_log"
 touch -d '2000-01-01 00:00:00 UTC' "$older_log"
 show_recent_migration_log > "$fixture/recent"
-grep -Fq "最近一次迁移日志：$MIGRATION_LOG_FILE" "$fixture/recent"
+grep -Fq "最近一次操作日志：$MIGRATION_LOG_FILE" "$fixture/recent"
 grep -Fq 'DB_PASSWORD=[REDACTED]' "$fixture/recent"
 ! grep -Fq 'OLDER LOG MUST NOT BE SELECTED' "$fixture/recent"
 
@@ -55,6 +55,6 @@ grep -Fxq 'ACTION:command-migrate' "$fixture/command-routing"
 
 empty_log_dir="$fixture/no logs"
 MIGRATION_LOG_DIR="$empty_log_dir" show_recent_migration_log > "$fixture/no-log"
-grep -Fq '尚无迁移日志' "$fixture/no-log"
+grep -Fq '尚无操作日志' "$fixture/no-log"
 
 printf 'PASS: migration menu, command entry, protected logs, recent selection and redaction\n'

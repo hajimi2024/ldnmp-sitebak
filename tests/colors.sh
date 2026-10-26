@@ -105,6 +105,6 @@ narrow = ansi.sub('', run(terminal=True, COLUMNS='32'))
 assert '\nLDNMP\n----------------\n单站备份恢复工具\n----------------\n' in narrow
 assert '1.  列出 WordPress 站点\n2.  备份单个站点' in narrow
 assert '2.  备份单个站点\n\n3.  查看备份文件' in narrow
-assert '8.  站点迁移 ♻️' in narrow
+assert '8.  站点导入 ♻️' in narrow
 PY
 printf 'PASS: terminal colors, resets, plain-output fallback, column alignment and clean selection values\n'

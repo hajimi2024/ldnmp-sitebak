@@ -63,12 +63,12 @@ assert_layout('snapshots-wide', [
 
 main = read_plain('main-wide').splitlines()
 assert main.count('-' * 24) == 4, main
-assert main[-4:] == ['8.  站点迁移 ♻️', '-' * 24, '0.  退出', '-' * 24], main
+assert main[-4:] == ['8.  站点导入 ♻️', '-' * 24, '0.  退出', '-' * 24], main
 
 migration = read_plain('migration-wide').splitlines()
 assert migration == [
-    '站点迁移', '-' * 24,
-    '1.  更换域名迁移', '2.  保留域名迁移', '3.  查看最近一次迁移日志', '',
+    '站点导入', '-' * 24,
+    '1.  导入并更换域名', '2.  导入并保留域名', '3.  查看最近一次操作日志', '',
     '0.  返回上一级', '-' * 24,
 ], migration
 
@@ -76,7 +76,7 @@ narrow = read_plain('main-narrow')
 assert '1.  列出 WordPress 站点\n2.  备份单个站点' in narrow
 assert '2.  备份单个站点\n\n3.  查看备份文件' in narrow
 assert '7.  更新脚本\n' in narrow
-assert ('7.  更新脚本\n' + '-' * 24 + '\n8.  站点迁移 ♻️\n' +
+assert ('7.  更新脚本\n' + '-' * 24 + '\n8.  站点导入 ♻️\n' +
         '-' * 24 + '\n0.  退出') in narrow
 assert '                 2.  备份单个站点' not in narrow
 
