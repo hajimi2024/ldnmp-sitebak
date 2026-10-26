@@ -26,6 +26,9 @@ prepare_db_client() {
 get_target_server_identity() { printf '%s' "$fixture_server_identity"; }
 get_target_server_username() { printf '%s' fixture-user; }
 get_target_server_display() { printf '%s' 'target-vps（2C / 4G）'; }
+prepare_wp_cli_environment() { migration_log INFO 'MOCK WP-CLI 环境检查通过。'; }
+cleanup_wp_cli_environment() { :; }
+finalize_wordpress_migration() { migration_log INFO "MOCK 阶段四收尾：$1 / $2 / $3"; }
 run_mysqldump() { printf '%s\n' 'CREATE TABLE `source_options` (`option_id` bigint);'; }
 run_mysql() {
   if [[ " $* " == *' SHOW TABLES '* ]]; then
@@ -120,8 +123,7 @@ if ! migration_preflight change-domain < <(printf '%s\n' 1 1 yes) > "$fixture/ch
   cat "$fixture/change-output" >&2
   exit 1
 fi
-grep -Fq '站点文件和数据库已导入完成' "$fixture/change-output"
-grep -Fq '旧网址替换' "$fixture/change-output"
+grep -Fq '站点导入及收尾完成' "$fixture/change-output"
 grep -Fq '正在检查备份包' "$fixture/change-output"
 grep -Fq '正在导入目标数据库：target_db' "$fixture/change-output"
 grep -Fq '正在替换目标 WordPress Root' "$fixture/change-output"
@@ -147,7 +149,7 @@ if ! migration_preflight change-domain < <(printf '%s\n' 1 new.example yse yes) 
   exit 1
 fi
 grep -Fq '输入错误，请输入完整小写 yes' "$fixture/confirm-retry-output"
-grep -Fq '站点文件和数据库已导入完成' "$fixture/confirm-retry-output"
+grep -Fq '站点导入及收尾完成' "$fixture/confirm-retry-output"
 
 # SQL that can switch or create databases is rejected before confirmation and writes.
 printf 'USE another_database;\n' | gzip > "$fixture/forbidden.sql.gz"

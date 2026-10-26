@@ -2,7 +2,7 @@
 
 set -Eeuo pipefail
 
-VERSION="0.3.9"
+VERSION="0.4.0"
 APP_NAME="LDNMP 单站备份恢复工具"
 
 WEB_ROOT="${SITEBAK_WEB_ROOT:-/home/web}"
@@ -14,6 +14,13 @@ PROJECT_URL="https://github.com/hajimi2024/ldnmp-sitebak"
 MIGRATION_LOG_DIR="${SITEBAK_MIGRATION_LOG_DIR:-/var/log/sitebak}"
 MIGRATION_TMP_ROOT="${SITEBAK_MIGRATION_TMP_ROOT:-/tmp}"
 MIGRATION_LOG_FILE=''
+WPCLI_VERSION='2.12.0'
+WPCLI_SHA256='ce34ddd838f7351d6759068d09793f26755463b4a4610a5a5c0a97b68220d85c'
+WPCLI_CONTAINER=''
+WPCLI_CONTAINER_ROOT=''
+WPCLI_RUN_USER=''
+WPCLI_TEMP_CONTAINER_PATH=''
+WPCLI_COMMAND=()
 
 NGINX_CONF_DIRS=(
   "$WEB_ROOT/conf.d"
@@ -235,7 +242,8 @@ render_migration_menu() {
   menu_separator
   menu_item '1.  导入并更换域名'; printf '\n'
   menu_item '2.  导入并保留域名'; printf '\n'
-  menu_item '3.  查看最近一次操作日志'; printf '\n'
+  menu_item '3.  继续完成域名替换与修复'; printf '\n'
+  menu_item '4.  查看最近一次操作日志'; printf '\n'
   printf '\n'
   menu_item '0.  返回上一级'; printf '\n'
   menu_separator
@@ -1407,6 +1415,7 @@ operation_type_label() {
     snapshot-restore) printf '完整快照还原' ;;
     change-domain) printf '导入并更换域名' ;;
     keep-domain) printf '导入并保留域名' ;;
+    continue-finalize) printf '继续完成域名替换与修复' ;;
     *) return 1 ;;
   esac
 }
@@ -1425,7 +1434,17 @@ confirm_target_operation() {
   printf '%s目标 WordPress Root：%s%s%s\n' "$NUMBER" "$BLUE" "$target_root" "$RESET"
   printf '%s目标数据库：%s%s%s\n' "$NUMBER" "$BLUE" "$database_name" "$RESET"
   printf '%s备份文件：%s%s%s\n\n' "$NUMBER" "$BLUE" "${archive##*/}" "$RESET"
-  printf '%s🚨 警告：即将写入目标网站文件及数据库。%s\n\n' "$RED" "$RESET"
+  case "$operation" in
+    continue-finalize)
+      printf '%s🚨 警告：即将对目标网站执行 WP-CLI 域名替换与修复。%s\n\n' "$RED" "$RESET"
+      ;;
+    change-domain|keep-domain)
+      printf '%s🚨 警告：即将写入目标网站文件及数据库，并执行 WP-CLI 收尾。%s\n\n' "$RED" "$RESET"
+      ;;
+    *)
+      printf '%s🚨 警告：即将写入目标网站文件及数据库。%s\n\n' "$RED" "$RESET"
+      ;;
+  esac
   while true; do
     ui_prompt '请输入 yes 确认：'
     ui_read confirm || { warn '已取消操作。'; return 1; }
@@ -1456,6 +1475,395 @@ replace_migration_target_files() {
   cp -a -- "$stage_root/." "$target_root/" || return 1
   find "$target_root" -mindepth 1 -exec chown -h "$owner" {} + || return 1
 }
+
+map_host_path_to_container() {
+  local container="$1" host_path="$2" target_real mounts source destination source_real relative candidate best='' best_length=0
+  target_real="$(realpath -e -- "$host_path")" || { err '无法解析目标 WordPress Root。'; return 1; }
+  mounts="$(docker inspect --type container --format '{{range .Mounts}}{{printf "%s\t%s\n" .Source .Destination}}{{end}}' "$container" 2>/dev/null)" || {
+    err "无法读取 PHP 容器挂载：$container"
+    return 1
+  }
+  while IFS=$'\t' read -r source destination; do
+    [[ -n "$source" && "$destination" == /* && "$destination" != *'..'* ]] || continue
+    source_real="$(realpath -e -- "$source" 2>/dev/null || true)"
+    [[ -n "$source_real" ]] || continue
+    case "$target_real" in
+      "$source_real") relative='' ;;
+      "$source_real"/*) relative="${target_real#"$source_real"}" ;;
+      *) continue ;;
+    esac
+    candidate="${destination%/}$relative"
+    if ((${#source_real} > best_length)); then
+      best="$candidate"
+      best_length=${#source_real}
+    fi
+  done <<< "$mounts"
+  [[ -n "$best" ]] || { err '目标 WordPress Root 未映射到 PHP 容器，拒绝运行 WP-CLI。'; return 1; }
+  printf '%s' "$best"
+}
+
+cleanup_wp_cli_environment() {
+  if [[ -n "$WPCLI_TEMP_CONTAINER_PATH" && -n "$WPCLI_CONTAINER" ]]; then
+    docker exec "$WPCLI_CONTAINER" rm -f -- "$WPCLI_TEMP_CONTAINER_PATH" >/dev/null 2>&1 || true
+  fi
+  WPCLI_TEMP_CONTAINER_PATH=''
+  WPCLI_COMMAND=()
+}
+
+prepare_wp_cli_environment() {
+  local target_root="$1" temp_dir="$2" state php_version owner phar_file actual_hash command_path wp_cli_actual
+  WPCLI_CONTAINER="${SITEBAK_PHP_CONTAINER:-php}"
+  command -v docker >/dev/null 2>&1 || { err '未找到 docker，无法使用 LDNMP PHP 容器运行 WP-CLI。'; return 1; }
+  state="$(docker inspect --type container --format '{{.State.Running}}' "$WPCLI_CONTAINER" 2>/dev/null || true)"
+  [[ "$state" == true ]] || { err "PHP 容器不存在或未运行：$WPCLI_CONTAINER"; return 1; }
+  WPCLI_CONTAINER_ROOT="$(map_host_path_to_container "$WPCLI_CONTAINER" "$target_root")" || return 1
+  owner="$(stat -c '%u:%g' "$target_root")" || { err '无法读取目标 WordPress Root 属主。'; return 1; }
+  [[ "$owner" =~ ^[0-9]+:[0-9]+$ ]] || { err '目标 WordPress Root 属主不合法。'; return 1; }
+  WPCLI_RUN_USER="$owner"
+  docker exec "$WPCLI_CONTAINER" php -r 'exit(version_compare(PHP_VERSION, "7.2.24", "<") ? 1 : 0);' || {
+    err 'PHP 容器版本不满足 WP-CLI 的最低要求。'
+    return 1
+  }
+  php_version="$(docker exec "$WPCLI_CONTAINER" php -r 'echo PHP_VERSION;' 2>/dev/null)" || return 1
+  docker exec "$WPCLI_CONTAINER" php -r 'foreach (["json", "mysqli", "Phar"] as $e) { if (!extension_loaded($e)) { fwrite(STDERR, $e."\n"); exit(1); } }' || {
+    err 'PHP 容器缺少 WordPress/WP-CLI 必要扩展。'
+    return 1
+  }
+  SITEBAK_CHECK_DB_HOST="$DB_HOST" SITEBAK_CHECK_DB_USER="$DB_USER" \
+  SITEBAK_CHECK_DB_PASSWORD="$DB_PASSWORD" SITEBAK_CHECK_DB_NAME="$DB_NAME" \
+  docker exec \
+    -e SITEBAK_CHECK_DB_HOST \
+    -e SITEBAK_CHECK_DB_USER \
+    -e SITEBAK_CHECK_DB_PASSWORD \
+    -e SITEBAK_CHECK_DB_NAME \
+    "$WPCLI_CONTAINER" php -r '
+      $host = getenv("SITEBAK_CHECK_DB_HOST"); $port = 3306;
+      if (preg_match("/^(.*):([0-9]+)$/", $host, $m)) { $host = $m[1]; $port = (int) $m[2]; }
+      mysqli_report(MYSQLI_REPORT_OFF);
+      $db = @new mysqli($host, getenv("SITEBAK_CHECK_DB_USER"), getenv("SITEBAK_CHECK_DB_PASSWORD"), "", $port);
+      if ($db->connect_errno || !$db->select_db(getenv("SITEBAK_CHECK_DB_NAME")) || !$db->query("SELECT 1")) { exit(1); }
+    ' || {
+    err 'PHP 容器无法通过目标 WordPress 数据库凭据连接目标数据库。'
+    return 1
+  }
+
+  command_path="$(docker exec "$WPCLI_CONTAINER" sh -c 'command -v wp 2>/dev/null || true')"
+  if [[ -n "$command_path" ]]; then
+    WPCLI_COMMAND=("$command_path")
+  else
+    command -v curl >/dev/null 2>&1 || { err 'PHP 容器没有 WP-CLI，宿主机也缺少 curl，无法准备临时程序。'; return 1; }
+    phar_file="$temp_dir/wp-cli-${WPCLI_VERSION}.phar"
+    migration_progress "PHP 容器未安装 WP-CLI，正在准备经过校验的临时 WP-CLI ${WPCLI_VERSION}。"
+    curl -fsSL --connect-timeout 15 --max-time 180 \
+      "https://github.com/wp-cli/wp-cli/releases/download/v${WPCLI_VERSION}/wp-cli-${WPCLI_VERSION}.phar" -o "$phar_file" || {
+      err '临时 WP-CLI 下载失败。'
+      return 1
+    }
+    actual_hash="$(sha256sum "$phar_file" | awk '{print $1}')"
+    [[ "$actual_hash" == "$WPCLI_SHA256" ]] || { err '临时 WP-CLI 校验失败。'; return 1; }
+    WPCLI_TEMP_CONTAINER_PATH="/tmp/sitebak-wp-cli-${WPCLI_VERSION}-$$.phar"
+    docker cp "$phar_file" "$WPCLI_CONTAINER:$WPCLI_TEMP_CONTAINER_PATH" >/dev/null || { err '无法把临时 WP-CLI 放入 PHP 容器。'; return 1; }
+    docker exec "$WPCLI_CONTAINER" chmod 0755 "$WPCLI_TEMP_CONTAINER_PATH" || return 1
+    WPCLI_COMMAND=(php "$WPCLI_TEMP_CONTAINER_PATH")
+  fi
+  docker exec --user "$WPCLI_RUN_USER" --workdir "$WPCLI_CONTAINER_ROOT" -e WP_CLI_PAGER=cat "$WPCLI_CONTAINER" \
+    "${WPCLI_COMMAND[@]}" --path="$WPCLI_CONTAINER_ROOT" --allow-root --info >/dev/null || {
+    err 'WP-CLI 无法在目标 WordPress Root 中安全运行。'
+    return 1
+  }
+  wp_cli_actual="$(docker exec --user "$WPCLI_RUN_USER" --workdir "$WPCLI_CONTAINER_ROOT" -e WP_CLI_PAGER=cat "$WPCLI_CONTAINER" \
+    "${WPCLI_COMMAND[@]}" --path="$WPCLI_CONTAINER_ROOT" --allow-root cli version 2>/dev/null)" || return 1
+  [[ "$wp_cli_actual" == WP-CLI\ * ]] || { err '无法读取 WP-CLI 实际版本。'; return 1; }
+  migration_log INFO "WP-CLI 环境检查通过；PHP容器=$WPCLI_CONTAINER；PHP版本=$php_version；容器Root=$WPCLI_CONTAINER_ROOT；执行用户=$WPCLI_RUN_USER；WP-CLI版本=$wp_cli_actual"
+}
+
+run_wp_cli() {
+  [[ -n "$WPCLI_CONTAINER" && -n "$WPCLI_CONTAINER_ROOT" && ${#WPCLI_COMMAND[@]} -gt 0 ]] || {
+    err 'WP-CLI 环境尚未初始化。'
+    return 1
+  }
+  docker exec --user "$WPCLI_RUN_USER" --workdir "$WPCLI_CONTAINER_ROOT" -e WP_CLI_PAGER=cat "$WPCLI_CONTAINER" \
+    "${WPCLI_COMMAND[@]}" --path="$WPCLI_CONTAINER_ROOT" --allow-root "$@"
+}
+
+wp_url_host() {
+  local url="$1" host
+  host="${url#http://}"
+  host="${host#https://}"
+  host="${host#//}"
+  host="${host%%/*}"
+  host="${host%%:*}"
+  printf '%s' "$host"
+}
+
+run_wp_search_replace() {
+  local old="$1" new="$2" regex_mode="${3:-no}"
+  local common=(--skip-plugins --skip-themes search-replace "$old" "$new" --all-tables-with-prefix --skip-columns=guid --precise)
+  [[ "$regex_mode" != yes ]] || common+=(--regex --regex-delimiter='#')
+  migration_log INFO "域名替换 dry-run；旧值=$old；新值=$new；正则=$regex_mode；固定跳过列=guid"
+  run_wp_cli "${common[@]}" --dry-run >/dev/null || return 1
+  migration_log INFO "域名替换 dry-run 通过；旧值=$old；新值=$new"
+  migration_log INFO "域名替换正式执行；旧值=$old；新值=$new；正则=$regex_mode；固定跳过列=guid"
+  run_wp_cli "${common[@]}" >/dev/null || return 1
+  migration_log INFO "域名替换正式执行完成；旧值=$old；新值=$new"
+}
+
+elementor_finalize() {
+  local mode="$1" source_domain="$2" target_url="$3" active_plugins must_use_plugins plugin skip_plugins='' version old_url
+  if ! run_wp_cli --skip-plugins --skip-themes plugin is-installed elementor >/dev/null 2>&1; then
+    migration_log INFO '未安装 Elementor，已跳过 Elementor 修复。'
+    info '未安装 Elementor，跳过 Elementor 修复。'
+    return 0
+  fi
+  if ! run_wp_cli --skip-plugins --skip-themes plugin is-active elementor >/dev/null 2>&1; then
+    migration_log WARN 'Elementor 已安装但未启用，未擅自启用，已跳过 Elementor 修复。'
+    warn 'Elementor 已安装但未启用，跳过修复。'
+    return 0
+  fi
+  version="$(run_wp_cli --skip-plugins --skip-themes plugin get elementor --field=version 2>/dev/null)" || {
+    err '无法读取 Elementor 版本。'
+    return 1
+  }
+  must_use_plugins="$(run_wp_cli --skip-plugins --skip-themes plugin list --status=must-use --field=name)" || return 1
+  if [[ -n "$must_use_plugins" ]]; then
+    err '检测到无法由 WP-CLI 跳过的 Must-Use 插件，无法安全隔离 Elementor 命令。'
+    migration_log ERROR 'Elementor 命令因 Must-Use 插件无法隔离而停止。'
+    return 1
+  fi
+  active_plugins="$(run_wp_cli --skip-plugins --skip-themes plugin list --status=active --field=name)" || return 1
+  while IFS= read -r plugin; do
+    [[ -n "$plugin" || "$plugin" == elementor || "$plugin" == elementor-pro ]] || continue
+    case "$plugin" in elementor|elementor-pro) ;; *) skip_plugins+="${skip_plugins:+,}$plugin" ;; esac
+  done <<< "$active_plugins"
+  local safe_flags=(--skip-themes)
+  [[ -z "$skip_plugins" ]] || safe_flags+=("--skip-plugins=$skip_plugins")
+  migration_log INFO "检测到 Elementor；版本=$version；已限制加载其他启用插件。"
+  if ! run_wp_cli "${safe_flags[@]}" help elementor flush_css >/dev/null 2>&1; then
+    err "Elementor $version 未注册已验证的 flush_css 命令。"
+    return 1
+  fi
+  if [[ "$mode" == change-domain ]]; then
+    if ! run_wp_cli "${safe_flags[@]}" help elementor replace_urls >/dev/null 2>&1; then
+      err "Elementor $version 未注册已验证的 replace_urls 命令。"
+      return 1
+    fi
+    migration_progress '正在处理 Elementor 页面 URL。'
+    for old_url in "https://$source_domain" "http://$source_domain"; do
+      run_wp_cli "${safe_flags[@]}" elementor replace_urls "$old_url" "$target_url" >/dev/null || return 1
+    done
+  fi
+  migration_progress '正在重新生成 Elementor CSS。'
+  run_wp_cli "${safe_flags[@]}" elementor flush_css --regenerate >/dev/null || return 1
+  migration_log INFO "Elementor 修复完成；版本=$version"
+}
+
+finalize_wordpress_migration() {
+  local mode="$1" source_domain="$2" target_domain="$3" target_url="$4" locked_identity="$5" prefix="$6"
+  local old_home old_siteurl current_home current_siteurl escaped_source bare_pattern home_host siteurl_host
+  migration_progress '正在检查 WordPress 与数据库连接。'
+  revalidate_migration_target_scope "$target_domain" "$locked_identity" "$prefix" || return 1
+  run_wp_cli --skip-plugins --skip-themes core is-installed >/dev/null || { err '目标 WordPress 数据库尚未正确安装。'; return 1; }
+  run_wp_cli --skip-plugins --skip-themes eval 'global $wpdb; exit($wpdb->get_var("SELECT 1") === "1" ? 0 : 1);' >/dev/null || {
+    err 'WP-CLI 无法通过目标 WordPress 配置连接数据库。'
+    return 1
+  }
+  old_home="$(run_wp_cli --skip-plugins --skip-themes option get home)" || return 1
+  old_siteurl="$(run_wp_cli --skip-plugins --skip-themes option get siteurl)" || return 1
+  home_host="$(wp_url_host "$old_home")"
+  siteurl_host="$(wp_url_host "$old_siteurl")"
+
+  if [[ "$mode" == change-domain ]]; then
+    [[ "$home_host" == "$source_domain" || "$home_host" == "$target_domain" ]] &&
+      [[ "$siteurl_host" == "$source_domain" || "$siteurl_host" == "$target_domain" ]] || {
+      err '数据库中的 home/siteurl 与阶段三源、目标域名均不一致，拒绝自动替换。'
+      return 1
+    }
+    [[ "$home_host" != "$target_domain" || "$old_home" == "$target_url" ]] &&
+      [[ "$siteurl_host" != "$target_domain" || "$old_siteurl" == "$target_url" ]] || {
+      err '数据库中的目标 home/siteurl 协议或路径异常，拒绝继续。'
+      return 1
+    }
+    migration_progress "正在替换旧域名：$source_domain → $target_domain"
+    revalidate_migration_target_scope "$target_domain" "$locked_identity" "$prefix" || return 1
+    run_wp_search_replace "https://$source_domain" "$target_url" || return 1
+    run_wp_search_replace "http://$source_domain" "$target_url" || return 1
+    run_wp_search_replace "//$source_domain" "//$target_domain" || return 1
+    escaped_source="$(printf '%s' "$source_domain" | sed 's/[][(){}.^$*+?|\\]/\\&/g')"
+    bare_pattern="(?<![A-Za-z0-9.-])${escaped_source}(?![A-Za-z0-9.-])"
+    run_wp_search_replace "$bare_pattern" "$target_domain" yes || return 1
+    migration_progress '旧域名替换完成。'
+  else
+    [[ "$home_host" == "$source_domain" && "$siteurl_host" == "$source_domain" ]] || {
+      err '数据库中的 home/siteurl 与保留域名记录不一致，拒绝继续。'
+      return 1
+    }
+    migration_log INFO '保留域名模式：跳过全库域名替换。'
+  fi
+
+  revalidate_migration_target_scope "$target_domain" "$locked_identity" "$prefix" || return 1
+  run_wp_cli --skip-plugins --skip-themes option update home "$target_url" >/dev/null || return 1
+  run_wp_cli --skip-plugins --skip-themes option update siteurl "$target_url" >/dev/null || return 1
+  migration_progress '正在处理 Elementor。'
+  elementor_finalize "$mode" "$source_domain" "$target_url" || return 1
+
+  revalidate_migration_target_scope "$target_domain" "$locked_identity" "$prefix" || return 1
+  migration_progress '正在刷新固定链接与站点瞬态缓存。'
+  run_wp_cli --skip-plugins --skip-themes rewrite flush >/dev/null || return 1
+  run_wp_cli --skip-plugins --skip-themes transient delete --all >/dev/null || return 1
+
+  migration_progress '正在检查站点配置。'
+  current_home="$(run_wp_cli --skip-plugins --skip-themes option get home)" || return 1
+  current_siteurl="$(run_wp_cli --skip-plugins --skip-themes option get siteurl)" || return 1
+  [[ "$current_home" == "$target_url" && "$current_siteurl" == "$target_url" ]] || {
+    err '最终 home/siteurl 校验失败。'
+    return 1
+  }
+  [[ "$(run_wp_cli --skip-plugins --skip-themes config get table_prefix --type=variable)" == "$prefix" ]] || {
+    err '最终 WordPress 表前缀校验失败。'
+    return 1
+  }
+  run_wp_cli --skip-plugins --skip-themes core is-installed >/dev/null || return 1
+  revalidate_migration_target_scope "$target_domain" "$locked_identity" "$prefix" || return 1
+  migration_log INFO "阶段四收尾完成；源域名=$source_domain；目标域名=$target_domain；目标网址=$target_url；数据库=$MIGRATION_TARGET_DB_NAME；表前缀=$prefix；GUID始终跳过"
+  migration_progress 'WordPress 配置与数据库状态检查完成。'
+  warn '请人工检查首页、后台、媒体库、文章页面和 Elementor 编辑器；历史日志或授权记录中的旧域名可能仍需人工核查。'
+}
+
+list_stage3_completion_records() {
+  local file completion_log already_finalized mode source_line target_line root_line archive_line source prefix archive_sha server target database root archive_name
+  [[ -d "$MIGRATION_LOG_DIR" ]] || return 0
+  while IFS= read -r file; do
+    [[ "$file" != *'|'* ]] || continue
+    grep -Fq '阶段三写入状态；数据库已导入=yes；文件已替换=yes' "$file" || continue
+    grep -Fq '阶段四收尾完成；' "$file" && continue
+    already_finalized=no
+    while IFS= read -r completion_log; do
+      if grep -Fq "继续阶段四；阶段三日志=${file##*/}；" "$completion_log" && \
+         grep -Fq '阶段四收尾完成；' "$completion_log" && \
+         grep -Fq '迁移任务结束；退出状态=0' "$completion_log"; then
+        already_finalized=yes
+        break
+      fi
+    done < <(find "$MIGRATION_LOG_DIR" -maxdepth 1 -type f -name 'migration_continue-finalize_*.log' -print 2>/dev/null)
+    [[ "$already_finalized" == no ]] || continue
+    root_line="$(grep -F '目标 WordPress Root 导入完成：' "$file" | tail -n 1)"
+    source_line="$(grep -F '备份预检通过；源域名=' "$file" | tail -n 1)"
+    target_line="$(grep -F '目标预检通过；服务器=' "$file" | tail -n 1)"
+    archive_line="$(grep -F '已选择普通备份：' "$file" | tail -n 1)"
+    [[ -n "$root_line" && -n "$source_line" && -n "$target_line" && -n "$archive_line" ]] || continue
+    case "${file##*/}" in
+      migration_change-domain_*) mode=change-domain ;;
+      migration_keep-domain_*) mode=keep-domain ;;
+      *) continue ;;
+    esac
+    source="$(sed -n 's/.*备份预检通过；源域名=\([^；]*\)；源数据库=[^；]*；迁移表前缀=\([^；]*\)；备份指纹=\([0-9a-f]*\).*/\1/p' <<< "$source_line")"
+    prefix="$(sed -n 's/.*备份预检通过；源域名=[^；]*；源数据库=[^；]*；迁移表前缀=\([^；]*\)；备份指纹=\([0-9a-f]*\).*/\1/p' <<< "$source_line")"
+    archive_sha="$(sed -n 's/.*；备份指纹=\([0-9a-f]*\).*/\1/p' <<< "$source_line")"
+    server="$(sed -n 's/.*目标预检通过；服务器=\([^；]*\)；用户=.*/\1/p' <<< "$target_line")"
+    target="$(sed -n 's/.*；目标域名=\([^；]*\)；目标协议=.*/\1/p' <<< "$target_line")"
+    database="$(sed -n 's/.*；数据库=\([^；]*\)；目标身份=.*/\1/p' <<< "$target_line")"
+    root="${root_line#*目标 WordPress Root 导入完成：}"
+    archive_name="${archive_line#*已选择普通备份：}"
+    valid_domain "$source" && valid_domain "$target" || continue
+    [[ "$prefix" =~ ^[A-Za-z0-9_]+$ && "$database" =~ ^[A-Za-z0-9_-]+$ && "$archive_sha" =~ ^[0-9a-f]{64}$ ]] || continue
+    [[ "$root" == /* && "$root" != *'|'* && "$archive_name" != */* && "$archive_name" != *'|'* && "$server" != *'|'* ]] || continue
+    printf '%s|%s|%s|%s|%s|%s|%s|%s|%s|%s\n' "$file" "$mode" "$source" "$target" "$database" "$root" "$archive_name" "$archive_sha" "$prefix" "$server"
+  done < <(find "$MIGRATION_LOG_DIR" -maxdepth 1 -type f \( -name 'migration_change-domain_*.log' -o -name 'migration_keep-domain_*.log' \) -print 2>/dev/null | sort -r)
+}
+
+select_stage3_completion_record() {
+  local records=() choice number i
+  mapfile -t records < <(list_stage3_completion_records)
+  if ((${#records[@]} == 0)); then
+    warn '没有找到可核验的阶段三完成记录，不能启动独立收尾。' >&2
+    return 1
+  fi
+  while true; do
+    header >&2
+    printf '%s请选择已完成阶段三的站点记录：%s\n\n' "$BOLD" "$RESET" >&2
+    for i in "${!records[@]}"; do
+      IFS='|' read -r _ record_mode record_source record_target record_database _ _ _ _ _ <<< "${records[$i]}"
+      printf '%s%d.%s %s → %s  [%s / %s]%s\n' "$NUMBER" "$((i + 1))" "$BLUE" "$record_source" "$record_target" "$(operation_type_label "$record_mode")" "$record_database" "$RESET" >&2
+    done
+    menu_item '0. 返回上一级' >&2; printf '\n' >&2
+    ui_prompt $'\n请输入记录编号：' >&2
+    ui_read choice 2 || return 1
+    [[ "$choice" == 0 ]] && return 1
+    if [[ "$choice" =~ ^[0-9]{1,9}$ ]]; then
+      number=$((10#$choice))
+      if ((number >= 1 && number <= ${#records[@]})); then
+        printf '%s' "${records[$((number - 1))]}"
+        return 0
+      fi
+    fi
+    warn '无效的编号，请从当前记录列表中选择。' >&2
+  done
+}
+
+continue_migration_finalize() (
+  umask 077
+  local record record_log mode source_domain target_domain recorded_db recorded_root archive_name archive_sha prefix recorded_server
+  local archive target_dir target_wp_config target_wp_root target_scheme target_url locked_identity tmp='' status=0
+  migration_log_init continue-finalize
+  trap '
+    status=$?
+    set +e
+    cleanup_wp_cli_environment
+    if [[ -n "$tmp" && -d "$tmp" ]]; then rm -rf -- "$tmp"; migration_log INFO "已清理本次迁移临时目录。"; fi
+    migration_log_finish "$status"
+  ' EXIT
+  record="$(select_stage3_completion_record)" || { migration_log INFO '用户取消了阶段四记录选择。'; return 0; }
+  IFS='|' read -r record_log mode source_domain target_domain recorded_db recorded_root archive_name archive_sha prefix recorded_server <<< "$record"
+  archive="$BACKUP_DIR/$archive_name"
+  [[ -f "$record_log" && -f "$archive" ]] || { err '阶段三记录或原始备份文件不存在。'; migration_log ERROR '阶段三证据文件不完整。'; return 1; }
+  [[ "$(archive_kind "$archive" 2>/dev/null || true)" == backup && "$archive_name" == "${source_domain}_"* ]] || {
+    err '阶段三记录关联的文件不是对应源域名的普通备份。'
+    return 1
+  }
+  [[ "$(sha256sum "$archive" | awk '{print $1}')" == "$archive_sha" ]] || { err '原始备份文件与阶段三记录指纹不一致。'; migration_log ERROR '阶段三备份指纹不一致。'; return 1; }
+  [[ "$(get_target_server_identity)" == "$recorded_server" ]] || { err '当前服务器与阶段三记录不一致。'; migration_log ERROR '阶段三服务器身份不一致。'; return 1; }
+  case "$mode" in
+    change-domain) [[ "$source_domain" != "$target_domain" ]] || return 1 ;;
+    keep-domain) [[ "$source_domain" == "$target_domain" ]] || return 1 ;;
+    *) return 1 ;;
+  esac
+  target_dir="$(site_path "$target_domain")"
+  target_wp_config="$(find_wp_config "$target_dir")" || { err '无法唯一确定记录对应的目标 WordPress Root。'; return 1; }
+  validate_migration_target_scope "$target_domain" "$target_wp_config" || return 1
+  target_wp_root="$MIGRATION_TARGET_WP_ROOT"
+  [[ "$target_wp_root" == "$recorded_root" ]] || { err '当前 WordPress Root 与阶段三记录不一致。'; return 1; }
+  read_migration_db_config_file "$target_wp_config" || return 1
+  [[ "$DB_NAME" == "$recorded_db" && "$(validate_wp_table_prefix "$target_wp_config" '目标 WordPress 配置')" == "$prefix" ]] || {
+    err '当前数据库或表前缀与阶段三记录不一致。'
+    return 1
+  }
+  prepare_db_client mysql || return 1
+  run_mysql --batch --skip-column-names -e 'SELECT 1' "$DB_NAME" >/dev/null || { err '目标数据库连接失败。'; return 1; }
+  target_scheme="$(detect_target_scheme "$target_domain")" || return 1
+  target_url="${target_scheme}://${target_domain}"
+  capture_migration_target_identity "$target_domain" "$target_wp_config" "$target_scheme" "$prefix" || return 1
+  locked_identity="$MIGRATION_TARGET_IDENTITY"
+  [[ -d "$MIGRATION_TMP_ROOT" ]] || { err "迁移临时目录根路径不存在：$MIGRATION_TMP_ROOT"; return 1; }
+  tmp="$(mktemp -d "$MIGRATION_TMP_ROOT/sitebak.finalize.XXXXXX")"
+  chmod 0700 "$tmp"
+  migration_progress '正在检查 WP-CLI 环境。'
+  prepare_wp_cli_environment "$target_wp_root" "$tmp" || { migration_log ERROR 'WP-CLI 环境检查失败。'; return 1; }
+  migration_progress 'WP-CLI 环境检查完成。'
+  migration_log INFO "继续阶段四；阶段三日志=${record_log##*/}；源域名=$source_domain；目标域名=$target_domain；数据库=$DB_NAME；目标Root=$target_wp_root；备份=$archive_name"
+  confirm_target_operation continue-finalize "$source_domain" "$target_domain" "$target_url" "$MIGRATION_TARGET_SERVER" "$MIGRATION_TARGET_SERVER_USERNAME" "$target_wp_root" "$DB_NAME" "$archive" || {
+    migration_log INFO '用户取消了阶段四独立收尾。'
+    return 0
+  }
+  [[ "$(sha256sum "$archive" | awk '{print $1}')" == "$archive_sha" ]] || { err '确认后备份文件发生变化，已停止。'; return 1; }
+  revalidate_migration_target_scope "$target_domain" "$locked_identity" "$prefix" || return 1
+  finalize_wordpress_migration "$mode" "$source_domain" "$target_domain" "$target_url" "$locked_identity" "$prefix" || {
+    migration_log ERROR '阶段四独立收尾失败。'
+    return 1
+  }
+  header
+  ok '站点域名替换与 WordPress 修复完成。'
+  ok "操作日志已保存：$MIGRATION_LOG_FILE"
+)
 
 restore_site() (
   umask 077
@@ -1859,6 +2267,7 @@ migration_preflight() (
   trap '
     status=$?
     set +e
+    cleanup_wp_cli_environment
     if [[ -n "$tmp" && -d "$tmp" ]]; then
       rm -rf -- "$tmp"
       migration_log INFO "已清理本次迁移临时目录。"
@@ -1946,6 +2355,12 @@ migration_preflight() (
     migration_log ERROR '暂存完成后的目标身份重新验证失败。'
     return 1
   }
+  migration_progress '正在检查 WP-CLI 环境。'
+  prepare_wp_cli_environment "$target_wp_root" "$tmp" || {
+    migration_log ERROR 'WP-CLI 环境检查失败，尚未写入目标站点。'
+    return 1
+  }
+  migration_progress 'WP-CLI 环境检查完成。'
 
   migration_log INFO "目标数据库连接与空库检查通过；目标数据库=$MIGRATION_TARGET_DB_NAME"
   migration_log INFO "目标预检通过；服务器=$MIGRATION_TARGET_SERVER；用户=$MIGRATION_TARGET_SERVER_USERNAME；目标域名=$target_domain；目标协议=$target_scheme；目标属主=$target_owner；数据库=$MIGRATION_TARGET_DB_NAME；目标身份=$locked_identity"
@@ -1991,9 +2406,20 @@ migration_preflight() (
     return 1
   }
   migration_progress "目标 WordPress Root 导入完成：$target_wp_root"
+  prepare_db_client mysql || { migration_log ERROR '导入后数据库客户端重新检查失败。'; return 1; }
+  target_scheme="$(detect_target_scheme "$target_domain")" || return 1
+  capture_migration_target_identity "$target_domain" "$target_wp_config" "$target_scheme" "$MIGRATION_SOURCE_TABLE_PREFIX" || {
+    migration_log ERROR '无法建立阶段四目标身份。'
+    return 1
+  }
+  locked_identity="$MIGRATION_TARGET_IDENTITY"
+  finalize_wordpress_migration "$mode" "$MIGRATION_SOURCE_DOMAIN" "$target_domain" "$target_url" "$locked_identity" "$MIGRATION_SOURCE_TABLE_PREFIX" || {
+    migration_log ERROR '文件和数据库已导入，但阶段四 WordPress 收尾失败；可通过独立入口继续。'
+    err '阶段四收尾失败；文件和数据库已保留，可使用“继续完成域名替换与修复”再次处理。'
+    return 1
+  }
   header
-  ok '站点文件和数据库已导入完成。'
-  warn '更换域名模式尚未执行旧网址替换；新域名网站可能暂时不可用，需等待阶段四处理。'
+  ok '站点导入及收尾完成。'
   info '本阶段未修改 Nginx、SSL，也未重启共享容器。'
   ok "操作日志已保存：$MIGRATION_LOG_FILE"
 )
@@ -2008,9 +2434,10 @@ migration_menu() {
     case "$choice" in
       1) run_menu_action migration_preflight change-domain ;;
       2) run_menu_action migration_preflight keep-domain ;;
-      3) run_menu_action show_recent_migration_log ;;
+      3) run_menu_action continue_migration_finalize ;;
+      4) run_menu_action show_recent_migration_log ;;
       0) return 0 ;;
-      *) warn '无效的选择，请输入 0 至 3。' ;;
+      *) warn '无效的选择，请输入 0 至 4。' ;;
     esac
   done
 }
@@ -2060,6 +2487,7 @@ $APP_NAME v$VERSION
   SITEBAK_BACKUP_DIR     默认 /home
   SITEBAK_UPDATE_URL     默认 GitHub raw 地址
   SITEBAK_DB_CONTAINER   可选，指定数据库容器名称
+  SITEBAK_PHP_CONTAINER  默认 php，用于阶段四 WP-CLI
   SITEBAK_MIGRATION_LOG_DIR  默认 /var/log/sitebak
   SITEBAK_MIGRATION_TMP_ROOT 默认 /tmp
   NO_COLOR              设置后关闭彩色输出
