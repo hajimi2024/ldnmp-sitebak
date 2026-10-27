@@ -11,7 +11,7 @@ SITE_ROOT="$fixture/html"
 BACKUP_DIR="$fixture/backups"
 mkdir -p "$MIGRATION_LOG_DIR" "$MIGRATION_TMP_ROOT" "$SITE_ROOT" "$BACKUP_DIR"
 clear_screen() { :; }
-get_target_server_display() { printf '%s' 'target-vps（2C / 4G）'; }
+get_target_server_display() { printf '%s' '@target-vps 2c4g'; }
 
 commands="$fixture/wp-commands"
 old_home='http://old.example'

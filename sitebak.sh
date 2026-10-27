@@ -2,7 +2,7 @@
 
 set -Eeuo pipefail
 
-VERSION="0.7.1"
+VERSION="0.7.2"
 APP_NAME="LDNMP 单站备份恢复工具"
 
 WEB_ROOT="${SITEBAK_WEB_ROOT:-/home/web}"
@@ -65,6 +65,15 @@ migration_progress_break_line() {
   if [[ "$MIGRATION_PROGRESS_LINE_OPEN" == yes ]]; then
     printf '\n'
     MIGRATION_PROGRESS_LINE_OPEN=no
+  fi
+}
+
+terminal_link() {
+  local label="$1" url="$2" color="${3:-$BLUE}"
+  if [[ -z "$RESET" ]]; then
+    printf '%s' "$label"
+  else
+    printf '%s%s%s%s%s%s%s' "$color" $'\033]8;;' "$url" $'\033\\' "$NO_UNDERLINE" "$label" $'\033]8;;\033\\' "$RESET"
   fi
 }
 
@@ -2348,7 +2357,7 @@ snapshots_menu() {
 
 migration_preflight() (
   umask 077
-  local mode="$1" archive target_domain target_dir target_wp_config target_wp_root target_scheme target_url target_sql
+  local mode="$1" archive target_domain target_dir target_wp_config target_wp_root target_scheme target_url target_sql admin_url
   local tmp='' status=0 target_owner locked_identity archive_sha256 database_imported=no files_replaced=no backup_intro=''
   local target_db_user target_db_password target_db_host
   case "$mode" in
@@ -2531,6 +2540,8 @@ migration_preflight() (
   migration_progress_set 100 '站点导入及 WordPress 收尾全部完成。'
   migration_progress_end
   ok "✅ 站点 $target_domain 已成功导入。"
+  admin_url="${target_url%/}/wp-admin"
+  printf '%sWordPress 后台：%s\n' "$BLUE" "$(terminal_link "$admin_url" "$admin_url")"
   info '本阶段未修改 Nginx、SSL，也未重启共享容器。'
   ok "操作日志已保存：$MIGRATION_LOG_FILE"
 )

@@ -28,7 +28,7 @@ prepare_db_client() {
 }
 get_target_server_identity() { printf '%s' "$fixture_server_identity"; }
 get_target_server_username() { printf '%s' fixture-user; }
-get_target_server_display() { printf '%s' 'target-vps（2C / 4G）'; }
+get_target_server_display() { printf '%s' '@target-vps 2c4g'; }
 prepare_wp_cli_environment() {
   ((wpcli_status == 0)) || return "$wpcli_status"
   wpcli_preflight_done=yes
@@ -153,6 +153,7 @@ if ! migration_preflight change-domain < <(printf '%s\n' 1 1 new.example yes) > 
   exit 1
 fi
 grep -Fq '✅ 站点 new.example 已成功导入。' "$fixture/change-output"
+grep -Fq 'WordPress 后台：http://new.example/wp-admin' "$fixture/change-output"
 grep -Fq '适用于跨服务器导入并更换域名' "$fixture/change-output"
 assert_progress_output "$fixture/change-output" yes
 [[ $(< "$fixture/finalize-call") == 'change-domain|old.example|new.example|http://new.example' ]]
@@ -182,6 +183,7 @@ if ! migration_preflight change-domain < <(printf '%s\n' 1 new.example yse yes) 
 fi
 grep -Fq '输入错误，请输入完整小写 yes' "$fixture/confirm-retry-output"
 grep -Fq '✅ 站点 new.example 已成功导入。' "$fixture/confirm-retry-output"
+grep -Fq 'WordPress 后台：http://new.example/wp-admin' "$fixture/confirm-retry-output"
 
 # SQL that can switch or create databases is rejected before confirmation and writes.
 printf 'USE another_database;\n' | gzip > "$fixture/forbidden.sql.gz"
