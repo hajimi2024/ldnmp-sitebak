@@ -2,7 +2,7 @@
 
 set -Eeuo pipefail
 
-VERSION="0.7.0"
+VERSION="0.7.1"
 APP_NAME="LDNMP 单站备份恢复工具"
 
 WEB_ROOT="${SITEBAK_WEB_ROOT:-/home/web}"
@@ -1492,7 +1492,7 @@ get_target_server_display() {
   memory_kb="$(awk '/^MemTotal:[[:space:]]+/ { print $2; exit }' /proc/meminfo 2>/dev/null || true)"
   [[ "$memory_kb" =~ ^[1-9][0-9]*$ ]] || { err '无法读取目标服务器内存容量。'; return 1; }
   memory_gb=$(((memory_kb + 1048575) / 1048576))
-  printf '%s（%sC / %sG）' "$host" "$cores" "$memory_gb"
+  printf '@%s %sc%sg' "$host" "$cores" "$memory_gb"
 }
 
 get_current_server_label() {
@@ -1613,7 +1613,7 @@ confirm_target_operation() {
   printf '%s源站域名：%s%s%s\n' "$NUMBER" "$BLUE" "$source_domain" "$RESET"
   printf '%s目标域名：%s%s%s\n' "$NUMBER" "$BLUE" "$target_domain" "$RESET"
   printf '%s目标网址：%s%s%s\n' "$NUMBER" "$BLUE" "$target_url" "$RESET"
-  printf '%s目标服务器：%s%s%s\n' "$NUMBER" "$BLUE" "$server_display" "$RESET"
+  printf '%s目标服务器：%s%s%s\n' "$NUMBER" "$PURPLE" "$server_display" "$RESET"
   printf '%s目标 WordPress Root：%s%s%s\n' "$NUMBER" "$BLUE" "$target_root" "$RESET"
   printf '%s目标数据库：%s%s%s\n' "$NUMBER" "$BLUE" "$database_name" "$RESET"
   printf '%s备份文件：%s%s%s\n\n' "$NUMBER" "$BLUE" "${archive##*/}" "$RESET"

@@ -31,7 +31,7 @@ prepare_db_client() {
 }
 get_target_server_identity() { printf '%s' "$fixture_server_identity"; }
 get_target_server_username() { printf '%s' fixture-user; }
-get_target_server_display() { printf '%s' 'target-vps（2C / 4G）'; }
+get_target_server_display() { printf '%s' '@target-vps 2c4g'; }
 prepare_wp_cli_environment() { migration_log INFO 'MOCK WP-CLI 环境检查通过。'; }
 finalize_wordpress_migration() { migration_log INFO "MOCK WordPress 收尾：$1 / $2 / $3"; }
 run_mysqldump() { printf '%s\n' 'CREATE TABLE `wp_options` (`option_id` bigint);'; }
@@ -155,7 +155,7 @@ if ! migration_preflight change-domain < <(printf '%s\n' 1 1 target.example no) 
 fi
 grep -Fq '已取消操作' "$fixture/change-output"
 grep -Fq 'https://target.example' "$fixture/change-output"
-grep -Fq '目标服务器：target-vps（2C / 4G）' "$fixture/change-output"
+grep -Fq '目标服务器：@target-vps 2c4g' "$fixture/change-output"
 ! grep -Fq 'machine:0123456789abcdef' "$fixture/change-output"
 ! grep -Fq 'fixture-user' "$fixture/change-output"
 grep -Fq '操作类型：导入并更换域名' "$fixture/change-output"
