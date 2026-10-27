@@ -18,6 +18,8 @@ old_home='http://old.example'
 old_siteurl='https://old.example'
 mock_current_home="$old_home"
 mock_current_siteurl="$old_siteurl"
+mock_effective_home=''
+mock_effective_siteurl=''
 elementor_installed=yes
 wp_fail_pattern=''
 update_fail=''
@@ -37,7 +39,14 @@ run_wp_cli() {
   fi
   case " $* " in
     *' search-replace '*'--dry-run'*) : ;;
-    *' search-replace '*) mock_current_home='https://new.example'; mock_current_siteurl='https://new.example' ;;
+    *' search-replace '*)
+      if [[ -z "$mock_effective_home$mock_effective_siteurl" ]]; then
+        mock_current_home='https://new.example'
+        mock_current_siteurl='https://new.example'
+      fi
+      ;;
+    *' eval '*home_url*) printf '%s\n' "${mock_effective_home:-$mock_current_home}" ;;
+    *' eval '*site_url*) printf '%s\n' "${mock_effective_siteurl:-$mock_current_siteurl}" ;;
     *' option get home '*) printf '%s\n' "$mock_current_home" ;;
     *' option get siteurl '*) printf '%s\n' "$mock_current_siteurl" ;;
     *' option update home '*)
@@ -82,9 +91,25 @@ mock_current_siteurl="$old_siteurl"
 elementor_installed=no
 migration_log_init warning-summary
 finalize_wordpress_migration change-domain old.example new.example https://new.example locked source_ > "$fixture/warning-output" 2>&1
-[[ $(grep -c '域名替换检测到 16 条兼容性警告' "$fixture/warning-output") == 1 ]]
-[[ $(grep -c 'WP-CLI 已知警告：' "$MIGRATION_LOG_FILE") == 16 ]]
+[[ $(grep -c '已发现 16 条已知兼容性提示' "$fixture/warning-output") == 1 ]]
+[[ $(grep -c 'WP-CLI 已知兼容性提示汇总' "$MIGRATION_LOG_FILE") == 1 ]]
+! grep -Fq 'WP-CLI 已知警告：' "$MIGRATION_LOG_FILE"
 emit_known_warnings=''
+
+# 有效运行网址正确但数据库选项被常量覆盖时，允许完成并保留提示。
+: > "$commands"
+old_home='http://old.example'
+old_siteurl='http://old.example'
+mock_current_home="$old_home"
+mock_current_siteurl="$old_siteurl"
+mock_effective_home='https://new.example'
+mock_effective_siteurl='https://new.example'
+elementor_installed=no
+migration_log_init constant-override
+finalize_wordpress_migration change-domain old.example new.example https://new.example locked source_ > "$fixture/constant-output" 2>&1
+grep -Fq '有效运行网址已经正确，但数据库 home/siteurl 被配置常量覆盖' "$fixture/constant-output"
+mock_effective_home=''
+mock_effective_siteurl=''
 
 # home/siteurl 已经正确时，不再执行重复更新。
 : > "$commands"

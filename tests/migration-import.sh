@@ -68,13 +68,14 @@ assert_progress_output() {
   local file="$1" expect_complete="$2" values=() i
   mapfile -t values < <(grep -oE '[[:space:]][0-9]{1,3}%' "$file" | tr -d ' %')
   ((${#values[@]} > 0))
-  for ((i = 1; i < ${#values[@]}; i++)); do
-    ((values[i] >= values[i - 1]))
-  done
   if [[ "$expect_complete" == yes ]]; then
-    [[ "${values[-1]}" == 100 ]]
+    for stage in {1..8}; do
+      grep -Fq "0% 阶段${stage}/8" "$file"
+    done
+    [[ $(grep -c '100% 阶段[1-8]/8：' "$file") == 8 ]]
+    [[ $(grep -c '100% 阶段[1-8]/8：.*完成' "$file") == 8 ]]
   else
-    [[ ! " ${values[*]} " =~ [[:space:]]100[[:space:]] ]]
+    [[ $(grep -c '100% 阶段[1-8]/8：' "$file") -lt 8 ]]
   fi
 }
 
@@ -153,6 +154,7 @@ if ! migration_preflight change-domain < <(printf '%s\n' 1 1 new.example yes) > 
   exit 1
 fi
 grep -Fq '✅ 站点 new.example 已成功导入。' "$fixture/change-output"
+grep -Fq '✅ 已验证目标站点 < new.example > 为空站点，允许继续导入。' "$fixture/change-output"
 grep -Fq 'WordPress 后台：http://new.example/wp-admin' "$fixture/change-output"
 grep -Fq '适用于跨服务器导入并更换域名' "$fixture/change-output"
 assert_progress_output "$fixture/change-output" yes
