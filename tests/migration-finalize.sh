@@ -36,6 +36,8 @@ run_wp_cli() {
       'Warning: Skipping an uninitialized class "Astra_Builder_Header", replacements might not be complete.' >&2
   fi
   case " $* " in
+    *' search-replace '*'--dry-run'*) : ;;
+    *' search-replace '*) mock_current_home='https://new.example'; mock_current_siteurl='https://new.example' ;;
     *' option get home '*) printf '%s\n' "$mock_current_home" ;;
     *' option get siteurl '*) printf '%s\n' "$mock_current_siteurl" ;;
     *' option update home '*)
@@ -98,23 +100,23 @@ finalize_wordpress_migration change-domain old.example new.example https://new.e
 
 # 更新命令失败但复核值已正确时继续；复核仍错误则失败。
 : > "$commands"
-old_home='http://old.example'
-old_siteurl='http://old.example'
+old_home='http://same.example'
+old_siteurl='http://same.example'
 mock_current_home="$old_home"
 mock_current_siteurl="$old_siteurl"
 update_fail=home
 elementor_installed=no
-migration_log_init update-recheck
-finalize_wordpress_migration change-domain old.example new.example https://new.example locked source_ >/dev/null 2>&1
+ migration_log_init update-recheck
+finalize_wordpress_migration keep-domain same.example same.example https://same.example locked source_ >/dev/null 2>&1
 grep -Fq '更新命令返回失败，但复核值已经是目标网址' "$MIGRATION_LOG_FILE"
 update_fail=home-stays
-old_home='http://old.example'
-old_siteurl='http://old.example'
+old_home='http://same.example'
+old_siteurl='http://same.example'
 mock_current_home="$old_home"
 mock_current_siteurl="$old_siteurl"
 migration_log_init update-failure
 set +e
-finalize_wordpress_migration change-domain old.example new.example https://new.example locked source_ >/dev/null 2>&1
+finalize_wordpress_migration keep-domain same.example same.example https://same.example locked source_ >/dev/null 2>&1
 status=$?
 set -e
 [[ $status -ne 0 ]]

@@ -2,7 +2,7 @@
 
 set -Eeuo pipefail
 
-VERSION="0.4.4"
+VERSION="0.4.5"
 APP_NAME="LDNMP 单站备份恢复工具"
 
 WEB_ROOT="${SITEBAK_WEB_ROOT:-/home/web}"
@@ -1808,8 +1808,12 @@ finalize_wordpress_migration() {
     rm -f -- "$stderr_file"
     return "$status"
   }
-  ensure_wp_option_target home "$target_url" || return 1
-  ensure_wp_option_target siteurl "$target_url" || return 1
+  if [[ "$mode" == keep-domain ]]; then
+    ensure_wp_option_target home "$target_url" || return 1
+    ensure_wp_option_target siteurl "$target_url" || return 1
+  else
+    migration_log INFO '更换域名模式：域名替换已处理 home/siteurl，跳过重复更新。'
+  fi
   migration_progress '正在处理 Elementor。'
   elementor_finalize "$mode" "$source_domain" "$target_url" || return 1
   migration_progress_set 94 'Elementor 检查和修复完成。'
