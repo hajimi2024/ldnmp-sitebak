@@ -8,8 +8,8 @@ COLUMNS=80 render_main_menu > "$fixture/main-wide"
 COLUMNS=80 render_snapshot_menu > "$fixture/snapshots-wide"
 COLUMNS=80 render_migration_menu > "$fixture/migration-wide"
 COLUMNS=57 render_main_menu > "$fixture/main-narrow"
-mkdir -p "$fixture/html/example.com" "$fixture/backups"
-touch "$fixture/html/example.com/wp-config.php"
+mkdir -p "$fixture/html/example.com" "$fixture/html/second.example" "$fixture/backups"
+touch "$fixture/html/example.com/wp-config.php" "$fixture/html/second.example/wp-config.php"
 (
   set +e
   SITE_ROOT="$fixture/html"
@@ -127,7 +127,9 @@ for name, title, body in [
     title_index = lines.index(title)
     assert lines[title_index + 1] == '-' * 24, lines
     body_index = lines.index(body)
-    assert lines[body_index + 1:body_index + 4] == [
+    assert lines[body_index + 1] == '', lines
+    assert lines[body_index + 2] == '2. second.example', lines
+    assert lines[body_index + 3:body_index + 6] == [
         '-' * 24, '0.  返回上一级', '-' * 24], lines
 
 restore_lines = read_plain('restore-domain-selection').splitlines()

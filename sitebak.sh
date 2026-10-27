@@ -2,7 +2,7 @@
 
 set -Eeuo pipefail
 
-VERSION="0.6.7"
+VERSION="0.6.8"
 APP_NAME="LDNMP 单站备份恢复工具"
 
 WEB_ROOT="${SITEBAK_WEB_ROOT:-/home/web}"
@@ -547,6 +547,7 @@ select_domain() {
       local i
       for i in "${!sites[@]}"; do
         printf '%s%d.%s %s%s\n' "$NUMBER" "$((i + 1))" "$BLUE" "${sites[$i]}" "$RESET" >&2
+        ((i + 1 < ${#sites[@]})) && printf '\n' >&2
       done
     fi
     render_return_section >&2
@@ -600,6 +601,7 @@ select_existing_domain() {
       local i
       for i in "${!sites[@]}"; do
         printf '%s%d.%s %s%s\n' "$NUMBER" "$((i + 1))" "$BLUE" "${sites[$i]}" "$RESET" >&2
+        ((i + 1 < ${#sites[@]})) && printf '\n' >&2
       done
     fi
     render_return_section >&2
