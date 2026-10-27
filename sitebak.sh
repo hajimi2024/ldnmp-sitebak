@@ -2,7 +2,7 @@
 
 set -Eeuo pipefail
 
-VERSION="0.5.0"
+VERSION="0.5.1"
 APP_NAME="LDNMP 单站备份恢复工具"
 
 WEB_ROOT="${SITEBAK_WEB_ROOT:-/home/web}"
@@ -198,7 +198,14 @@ show_recent_migration_log() {
 
 ui_read() {
   local variable="$1" output_fd="${2:-1}" status
-  if IFS= read -r "$variable"; then
+  # 交互终端使用 Readline 处理 UTF-8 宽字符，避免中文退格时覆盖提示文本。
+  if [[ -t 0 ]]; then
+    if IFS= read -r -e "$variable"; then
+      status=0
+    else
+      status=$?
+    fi
+  elif IFS= read -r "$variable"; then
     status=0
   else
     status=$?
