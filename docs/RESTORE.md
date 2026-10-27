@@ -25,7 +25,7 @@ kk restore example.com
 ```text
 1. example.com_20260912_153000.tar.gz
 2. example.com_20260910_020000.tar.gz
-0. 返回上一级
+0.  返回上一级
 ```
 
 选择编号后，脚本会要求输入 `yes` 二次确认。

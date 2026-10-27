@@ -8,6 +8,27 @@ COLUMNS=80 render_main_menu > "$fixture/main-wide"
 COLUMNS=80 render_snapshot_menu > "$fixture/snapshots-wide"
 COLUMNS=80 render_migration_menu > "$fixture/migration-wide"
 COLUMNS=57 render_main_menu > "$fixture/main-narrow"
+mkdir -p "$fixture/html/example.com" "$fixture/backups"
+touch "$fixture/html/example.com/wp-config.php"
+(
+  set +e
+  SITE_ROOT="$fixture/html"
+  header() { :; }
+  select_domain '请选择站点' < <(printf '0\n')
+) > /dev/null 2> "$fixture/domain-selection" || true
+(
+  set +e
+  SITE_ROOT="$fixture/html"
+  header() { :; }
+  select_existing_domain '请选择目标站点' < <(printf '0\n')
+) > /dev/null 2> "$fixture/target-selection" || true
+(
+  set +e
+  BACKUP_DIR="$fixture/backups"
+  header() { :; }
+  select_backup example.com backup < <(printf '0\n')
+) > /dev/null 2> "$fixture/backup-selection" || true
+return_to_menu < <(printf '0\n') > "$fixture/return-menu"
 
 # Exercise the real menu dispatch without running backup, restore or deletion.
 (
@@ -55,34 +76,51 @@ assert_layout('main-wide', [
     ('1.  列出 WordPress 站点', '2.  备份单个站点'),
     ('3.  查看备份文件', '4.  恢复单个站点'),
     ('5.  快照管理', '6.  删除旧备份'),
-], separator_count=4)
+], separator_count=3)
 assert_layout('snapshots-wide', [
     ('1.  创建完整快照', '2.  查看快照'),
     ('3.  恢复完整快照', '4.  删除快照'),
 ])
 
 main = read_plain('main-wide').splitlines()
-assert main.count('-' * 24) == 4, main
+assert main.count('-' * 24) == 3, main
 assert main[-4:] == ['8.  站点导入 ♻️', '-' * 24, '0.  退出', '-' * 24], main
 
 migration = read_plain('migration-wide').splitlines()
 assert migration == [
     '站点导入', '-' * 24,
-    '1.  导入并更换域名', '2.  导入并保留域名', '3.  查看最近一次操作日志', '',
-    '0.  返回上一级', '-' * 24,
+    '1.  导入并更换域名', '2.  导入并保留域名', '3.  查看最近一次操作日志',
+    '-' * 24, '0.  返回上一级', '-' * 24,
 ], migration
 
 narrow = read_plain('main-narrow')
 assert '1.  列出 WordPress 站点\n2.  备份单个站点' in narrow
 assert '2.  备份单个站点\n\n3.  查看备份文件' in narrow
 assert '7.  更新脚本\n' in narrow
-assert ('7.  更新脚本\n' + '-' * 24 + '\n8.  站点导入 ♻️\n' +
+assert ('7.  更新脚本\n\n8.  站点导入 ♻️\n' +
         '-' * 24 + '\n0.  退出') in narrow
 assert '                 2.  备份单个站点' not in narrow
 
 actions = [line[len('ACTION:'):] for line in
            (root / 'routing').read_text().splitlines() if line.startswith('ACTION:')]
 assert actions == ['sites', 'backup', 'list-backups', 'restore', 'snapshots', 'delete', 'update', 'migration'], actions
+
+for name, title, body in [
+    ('domain-selection', '请选择站点：', '1. example.com'),
+    ('target-selection', '请选择目标站点：', '1. example.com'),
+]:
+    lines = read_plain(name).splitlines()
+    title_index = lines.index(title)
+    assert lines[title_index + 1] == '-' * 24, lines
+    body_index = lines.index(body)
+    assert lines[body_index + 1:body_index + 4] == [
+        '-' * 24, '0.  返回上一级', '-' * 24], lines
+
+backup_selection = read_plain('backup-selection')
+assert ('example.com 可用普通备份：\n' + '-' * 24 + '\n' in backup_selection), backup_selection
+assert ('\n' + '-' * 24 + '\n0.  返回上一级\n' + '-' * 24 + '\n请选择：' in backup_selection), backup_selection
+return_menu = read_plain('return-menu')
+assert ('\n' + '-' * 24 + '\n0.  返回上一级\n' + '-' * 24 + '\n请输入：') in return_menu, return_menu
 PY
 
 printf 'PASS: fixed menu order, action routing, two-column layout and narrow-terminal fallback\n'

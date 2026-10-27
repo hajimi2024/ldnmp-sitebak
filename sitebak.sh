@@ -2,7 +2,7 @@
 
 set -Eeuo pipefail
 
-VERSION="0.4.1"
+VERSION="0.4.2"
 APP_NAME="LDNMP 单站备份恢复工具"
 
 WEB_ROOT="${SITEBAK_WEB_ROOT:-/home/web}"
@@ -274,6 +274,12 @@ menu_row_gap() {
   printf '\n'
 }
 
+render_return_section() {
+  menu_separator
+  menu_item '0.  返回上一级'; printf '\n'
+  menu_separator
+}
+
 render_main_menu() {
   printf '%s操作%s\n' "$BOLD" "$RESET"
   menu_separator
@@ -284,7 +290,7 @@ render_main_menu() {
   menu_pair '5.  快照管理' '6.  删除旧备份' 12
   menu_row_gap
   menu_pair '7.  更新脚本' '' 12
-  menu_separator
+  menu_row_gap
   menu_item '8.  站点导入 ♻️'; printf '\n'
   menu_separator
   menu_item '0.  退出'; printf '\n'
@@ -297,9 +303,7 @@ render_snapshot_menu() {
   menu_pair '1.  创建完整快照' '2.  查看快照' 16
   menu_row_gap
   menu_pair '3.  恢复完整快照' '4.  删除快照' 16
-  menu_separator
-  menu_item '0.  返回上一级'; printf '\n'
-  menu_separator
+  render_return_section
 }
 
 render_migration_menu() {
@@ -308,9 +312,7 @@ render_migration_menu() {
   menu_item '1.  导入并更换域名'; printf '\n'
   menu_item '2.  导入并保留域名'; printf '\n'
   menu_item '3.  查看最近一次操作日志'; printf '\n'
-  printf '\n'
-  menu_item '0.  返回上一级'; printf '\n'
-  menu_separator
+  render_return_section
 }
 
 header() {
@@ -462,20 +464,19 @@ select_domain() {
 
   while true; do
     header >&2
-    printf '%s%s：%s\n\n' "$BOLD" "$title" "$RESET" >&2
+    printf '%s%s：%s\n' "$BOLD" "$title" "$RESET" >&2
+    menu_separator >&2
     if ((${#sites[@]} == 0)); then
       warn "未在 $SITE_ROOT 下找到 WordPress 站点。检查域名目录或其 wordpress 子目录中的 wp-config.php；同时存在两份配置时不自动选择。" >&2
-      printf '\n' >&2
-      menu_item '0. 返回上一级' >&2; printf '\n' >&2
     else
       local i
       for i in "${!sites[@]}"; do
         printf '%s%d.%s %s%s\n' "$NUMBER" "$((i + 1))" "$BLUE" "${sites[$i]}" "$RESET" >&2
       done
-      menu_item '0. 返回上一级' >&2; printf '\n' >&2
     fi
+    render_return_section >&2
 
-    ui_prompt $'\n请输入编号，或直接输入域名：' >&2
+    ui_prompt '请输入编号，或直接输入域名：' >&2
     ui_read choice 2 || return 1
     choice="${choice//[[:space:]]/}"
 
@@ -499,8 +500,9 @@ select_domain() {
     fi
 
     warn "域名格式不正确。" >&2
-    menu_item '1. 重新输入' >&2; printf '\n' >&2
-    menu_item '0. 返回上一级' >&2; printf '\n' >&2
+    menu_separator >&2
+    menu_item '1.  重新输入' >&2; printf '\n' >&2
+    render_return_section >&2
     ui_prompt '请选择：' >&2
     ui_read retry 2 || return 1
     [[ "$retry" == "0" ]] && return 1
@@ -514,19 +516,19 @@ select_existing_domain() {
 
   while true; do
     header >&2
-    printf '%s%s：%s\n\n' "$BOLD" "$title" "$RESET" >&2
+    printf '%s%s：%s\n' "$BOLD" "$title" "$RESET" >&2
+    menu_separator >&2
     if ((${#sites[@]} == 0)); then
       warn "未在 $SITE_ROOT 下找到可用的 WordPress 目标站点。" >&2
-      menu_item '0. 返回上一级' >&2; printf '\n' >&2
     else
       local i
       for i in "${!sites[@]}"; do
         printf '%s%d.%s %s%s\n' "$NUMBER" "$((i + 1))" "$BLUE" "${sites[$i]}" "$RESET" >&2
       done
-      menu_item '0. 返回上一级' >&2; printf '\n' >&2
     fi
+    render_return_section >&2
 
-    ui_prompt $'\n请输入目标站点编号或域名：' >&2
+    ui_prompt '请输入目标站点编号或域名：' >&2
     ui_read choice 2 || return 1
     [[ "$choice" == 0 ]] && return 1
     if [[ "$choice" =~ ^[0-9]{1,9}$ ]]; then
@@ -909,10 +911,11 @@ select_backup() {
   while true; do
     header >&2
     if [[ -n "$domain" ]]; then
-      printf '%s%s 可用%s：%s\n\n' "$BOLD" "$domain" "$title" "$RESET" >&2
+      printf '%s%s 可用%s：%s\n' "$BOLD" "$domain" "$title" "$RESET" >&2
     else
-      printf '%s可用%s：%s\n\n' "$BOLD" "$title" "$RESET" >&2
+      printf '%s可用%s：%s\n' "$BOLD" "$title" "$RESET" >&2
     fi
+    menu_separator >&2
 
     if ((${#backups[@]} == 0)); then
       if [[ -n "$domain" && "$filter" == backup ]]; then
@@ -922,8 +925,7 @@ select_backup() {
       else
         warn "未找到${title}文件。" >&2
       fi
-      printf '\n' >&2
-      menu_item '0. 返回上一级' >&2; printf '\n' >&2
+      render_return_section >&2
       ui_prompt '请选择：' >&2
       ui_read choice 2 || return 1
       [[ "$choice" == "0" ]] && return 1
@@ -937,7 +939,7 @@ select_backup() {
       mtime="$(date -r "$file" +"%Y-%m-%d %H:%M:%S")"
       printf '%s%d.%s [%s] %s    %s    %s%s\n' "$NUMBER" "$((i + 1))" "$BLUE" "$(archive_label "$file")" "$(basename "$file")" "$size" "$mtime" "$RESET" >&2
     done
-    menu_item '0. 返回上一级' >&2; printf '\n\n' >&2
+    render_return_section >&2
     ui_prompt "请选择要${action}的文件：" >&2
     ui_read choice 2 || return 1
 
@@ -2029,7 +2031,7 @@ return_to_menu() {
   local choice
   while true; do
     printf '\n'
-    menu_item '0. 返回上一级'; printf '\n'
+    render_return_section
     ui_prompt '请输入：'
     ui_read choice || return 0
     [[ "$choice" == "0" ]] && return 0
