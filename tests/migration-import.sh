@@ -148,7 +148,7 @@ mkdir -p "$SITE_ROOT/other.example/wordpress"
 write_wp_config "$SITE_ROOT/other.example/wordpress/wp-config.php" other_db other_user other_password other_
 printf 'other site\n' > "$SITE_ROOT/other.example/wordpress/index.php"
 cp -a "$SITE_ROOT/other.example" "$fixture/other-before"
-if ! migration_preflight change-domain < <(printf '%s\n' 1 1 yes) > "$fixture/change-output" 2>&1; then
+if ! migration_preflight change-domain < <(printf '%s\n' 1 1 new.example yes) > "$fixture/change-output" 2>&1; then
   cat "$fixture/change-output" >&2
   exit 1
 fi
@@ -196,7 +196,7 @@ start_case keep-success
 create_source_backup same.example nested same_source_db
 create_target_site same.example direct same_target_db
 write_target_nginx same.example
-if ! migration_preflight keep-domain < <(printf '%s\n' 1 1 yes) > "$fixture/keep-output" 2>&1; then
+if ! migration_preflight keep-domain < <(printf '%s\n' 1 1 same.example yes) > "$fixture/keep-output" 2>&1; then
   cat "$fixture/keep-output" >&2
   exit 1
 fi
@@ -212,7 +212,7 @@ create_source_backup old.example direct source_db
 create_target_site new.example nested target_db
 write_target_nginx new.example
 cp -a "$SITE_ROOT/new.example" "$fixture/cancel-before"
-migration_preflight change-domain < <(printf '%s\n' 1 1 no '') > "$fixture/cancel-output" 2>&1
+migration_preflight change-domain < <(printf '%s\n' 1 1 new.example no) > "$fixture/cancel-output" 2>&1
 grep -Fq '已取消操作' "$fixture/cancel-output"
 diff -r "$fixture/cancel-before" "$SITE_ROOT/new.example"
 [[ ! -e "$fixture/imported.sql" ]]
@@ -224,7 +224,7 @@ create_target_site new.example nested target_db
 write_target_nginx new.example
 printf 'existing_table\n' > "$db_tables_file"
 cp -a "$SITE_ROOT/new.example" "$fixture/nonempty-before"
-expect_failure migration_preflight change-domain < <(printf '%s\n' 1 1)
+expect_failure migration_preflight change-domain < <(printf '%s\n' 1 1 new.example)
 grep -Fq '目标数据库不是空库' "$fixture/failure-output"
 diff -r "$fixture/nonempty-before" "$SITE_ROOT/new.example"
 
@@ -233,7 +233,7 @@ create_source_backup same.example direct source_db
 create_target_site same.example nested target_db
 write_target_nginx same.example
 cp -a "$SITE_ROOT/same.example" "$fixture/wrong-before"
-expect_failure migration_preflight change-domain < <(printf '%s\n' 1 1)
+expect_failure migration_preflight change-domain < <(printf '%s\n' 1 1 same.example)
 grep -Fq '导入并更换域名要求源域名与目标域名不同' "$fixture/failure-output"
 diff -r "$fixture/wrong-before" "$SITE_ROOT/same.example"
 
@@ -243,7 +243,7 @@ create_target_site new.example nested target_db
 write_target_nginx new.example
 import_status=7
 cp -a "$SITE_ROOT/new.example" "$fixture/import-failure-before"
-expect_failure migration_preflight change-domain < <(printf '%s\n' 1 1 yes)
+expect_failure migration_preflight change-domain < <(printf '%s\n' 1 1 new.example yes)
 grep -Fq '数据库导入失败' "$fixture/failure-output"
 assert_progress_output "$fixture/failure-output" no
 diff -r "$fixture/import-failure-before" "$SITE_ROOT/new.example"
@@ -256,7 +256,7 @@ create_target_site new.example nested target_db
 write_target_nginx new.example
 wpcli_status=8
 cp -a "$SITE_ROOT/new.example" "$fixture/wpcli-before"
-expect_failure migration_preflight change-domain < <(printf '%s\n' 1 1)
+expect_failure migration_preflight change-domain < <(printf '%s\n' 1 1 new.example)
 wpcli_log="$(find "$MIGRATION_LOG_DIR" -type f -name 'migration_change-domain_*.log' -print -quit)"
 grep -Fq 'WP-CLI 环境检查失败，尚未写入目标站点' "$wpcli_log"
 diff -r "$fixture/wpcli-before" "$SITE_ROOT/new.example"
@@ -269,7 +269,7 @@ create_source_backup old.example direct source_db
 create_target_site new.example nested target_db
 write_target_nginx new.example
 finalize_status=9
-expect_failure migration_preflight change-domain < <(printf '%s\n' 1 1 yes)
+expect_failure migration_preflight change-domain < <(printf '%s\n' 1 1 new.example yes)
 [[ $(< "$fixture/finalize-call") == 'change-domain|old.example|new.example|http://new.example' ]]
 grep -Fq '目标站点可能已部分写入，请重新准备空白目标站点后从头导入' "$fixture/failure-output"
 [[ -f "$fixture/imported.sql" ]]
@@ -288,7 +288,7 @@ ui_read() {
   if [[ "$variable" == confirm ]]; then fixture_server_identity='wrong-vps / machine:fedcba9876543210'; fi
   return "$status"
 }
-expect_failure migration_preflight change-domain < <(printf '%s\n' 1 1 yes)
+expect_failure migration_preflight change-domain < <(printf '%s\n' 1 1 new.example yes)
 grep -Fq '目标身份或操作范围在预检期间发生变化' "$fixture/failure-output"
 diff -r "$fixture/identity-before" "$SITE_ROOT/new.example"
 [[ ! -e "$fixture/imported.sql" ]]

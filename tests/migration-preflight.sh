@@ -133,8 +133,23 @@ grep -Fq '目标域名不在当前站点列表中' "$fixture/strict-selection"
 selected="$(select_existing_domain < <(printf '%s\n' target.example) 2> "$fixture/domain-selection")"
 [[ "$selected" == target.example ]]
 
+# Numeric target selection requires exact full-domain confirmation; direct domain input does not.
+if ! migration_preflight change-domain < <(printf '%s\n' 1 1 target.example no) > "$fixture/numeric-target-output" 2>&1; then
+  cat "$fixture/numeric-target-output" >&2
+  exit 1
+fi
+grep -Fq '已选择目标站点 target.example，请输入完整域名确认' "$fixture/numeric-target-output"
+grep -Fq '✅ 已验证目标站点 target.example 为空站点。' "$fixture/numeric-target-output"
+
+if ! migration_preflight change-domain < <(printf '%s\n' 1 target.example no) > "$fixture/domain-target-output" 2>&1; then
+  cat "$fixture/domain-target-output" >&2
+  exit 1
+fi
+! grep -Fq '已选择目标站点 target.example，请输入完整域名确认' "$fixture/domain-target-output"
+grep -Fq '✅ 已验证目标站点 target.example 为空站点。' "$fixture/domain-target-output"
+
 # A cancelled stage-three confirmation preserves phase-two's zero-write behavior.
-if ! migration_preflight change-domain < <(printf '%s\n' 1 1 no '') > "$fixture/change-output" 2>&1; then
+if ! migration_preflight change-domain < <(printf '%s\n' 1 1 target.example no) > "$fixture/change-output" 2>&1; then
   cat "$fixture/change-output" >&2
   exit 1
 fi
@@ -180,7 +195,7 @@ diff -r "$fixture/unrelated-before" "$SITE_ROOT/zzz.example"
 
 # A non-empty target database must stop before any target file change.
 db_tables='wp_options'
-expect_failure migration_preflight change-domain < <(printf '%s\n' 1 1)
+expect_failure migration_preflight change-domain < <(printf '%s\n' 1 1 target.example)
 if ! grep -Fq '目标数据库不是空库' "$fixture/failure-output"; then
   cat "$fixture/failure-output" >&2
   exit 1
@@ -190,7 +205,7 @@ diff -r "$fixture/unrelated-before" "$SITE_ROOT/zzz.example"
 db_tables=''
 
 # Preserve-domain mode requires the manifest and selected target domain to match.
-expect_failure migration_preflight keep-domain < <(printf '%s\n' 1 1)
+expect_failure migration_preflight keep-domain < <(printf '%s\n' 1 1 target.example)
 grep -Fq '要求源域名与目标域名完全一致' "$fixture/failure-output"
 
 # Preserve-domain preflight also succeeds when the uploaded backup and target match.
@@ -204,7 +219,7 @@ mapfile -t backup_options < <(list_backups_for_domain '' backup)
 for i in "${!backup_options[@]}"; do
   [[ "${backup_options[$i]}" == "$same_archive" ]] && same_choice=$((i + 1))
 done
-if ! migration_preflight keep-domain < <(printf '%s\n' "$same_choice" 1 no) > "$fixture/keep-output" 2>&1; then
+if ! migration_preflight keep-domain < <(printf '%s\n' "$same_choice" 1 same.example no) > "$fixture/keep-output" 2>&1; then
   cat "$fixture/keep-output" >&2
   exit 1
 fi

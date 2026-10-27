@@ -2,7 +2,7 @@
 
 set -Eeuo pipefail
 
-VERSION="0.4.5"
+VERSION="0.4.6"
 APP_NAME="LDNMP 单站备份恢复工具"
 
 WEB_ROOT="${SITEBAK_WEB_ROOT:-/home/web}"
@@ -512,8 +512,9 @@ select_domain() {
 }
 
 select_existing_domain() {
-  local title="${1:-请选择目标站点}" choice number domain
+  local title="${1:-请选择目标站点}" output_var="${2:-}" choice number domain selected
   local sites=()
+  SELECTED_DOMAIN_INPUT_KIND=''
   mapfile -t sites < <(list_sites_array)
 
   while true; do
@@ -536,13 +537,24 @@ select_existing_domain() {
     if [[ "$choice" =~ ^[0-9]{1,9}$ ]]; then
       number=$((10#$choice))
       if ((number >= 1 && number <= ${#sites[@]})); then
-        printf '%s' "${sites[$((number - 1))]}"
+        SELECTED_DOMAIN_INPUT_KIND=number
+        selected="${sites[$((number - 1))]}"
+        if [[ -n "$output_var" ]]; then
+          printf -v "$output_var" '%s' "$selected"
+        else
+          printf '%s' "$selected"
+        fi
         return 0
       fi
     fi
     for domain in "${sites[@]}"; do
       if [[ "$choice" == "$domain" ]]; then
-        printf '%s' "$domain"
+        SELECTED_DOMAIN_INPUT_KIND=domain
+        if [[ -n "$output_var" ]]; then
+          printf -v "$output_var" '%s' "$domain"
+        else
+          printf '%s' "$domain"
+        fi
         return 0
       fi
     done
@@ -551,6 +563,19 @@ select_existing_domain() {
     else
       warn '目标域名不在当前站点列表中，请重新选择。' >&2
     fi
+  done
+}
+
+confirm_numeric_target_domain() {
+  local expected_domain="$1" confirmation
+  while true; do
+    ui_prompt "已选择目标站点 ${expected_domain}，请输入完整域名确认："
+    ui_read confirmation 2 || return 1
+    case "$confirmation" in
+      "$expected_domain") return 0 ;;
+      ''|0) warn '已取消目标站点确认。'; return 1 ;;
+      *) warn "输入不匹配，请完整输入 ${expected_domain}；直接回车取消。" ;;
+    esac
   done
 }
 
@@ -2261,10 +2286,17 @@ migration_preflight() (
   }
   migration_log INFO "已选择普通备份：${archive##*/}"
 
-  target_domain="$(select_existing_domain '请选择已预建的空 WordPress 目标站点')" || {
+  target_domain=''
+  select_existing_domain '请选择已预建的空 WordPress 目标站点' target_domain || {
     migration_log INFO '用户取消了目标站点选择。'
     return 0
   }
+  if [[ "${SELECTED_DOMAIN_INPUT_KIND:-}" == number ]]; then
+    confirm_numeric_target_domain "$target_domain" || {
+      migration_log INFO '用户未完成数字选择后的目标域名复核。'
+      return 0
+    }
+  fi
   migration_progress_begin '正在核对目标站点和数据库。'
   target_dir="$(site_path "$target_domain")"
   target_wp_config="$(find_wp_config "$target_dir")" || { err '无法唯一确定目标 WordPress Root。'; migration_log ERROR '目标 WordPress Root 不唯一。'; return 1; }
@@ -2276,6 +2308,7 @@ migration_preflight() (
   target_db_host="$DB_HOST"
   migration_progress "正在检查目标数据库是否为空：$DB_NAME"
   verify_empty_target_database || { migration_log ERROR "目标数据库空库检查失败；目标数据库=$DB_NAME"; return 1; }
+  ok "✅ 已验证目标站点 ${target_domain} 为空站点。"
   migration_progress_set 10 "目标数据库空库检查完成：$DB_NAME"
 
   [[ -d "$MIGRATION_TMP_ROOT" ]] || { err "迁移临时目录根路径不存在：$MIGRATION_TMP_ROOT"; migration_log ERROR '迁移临时目录根路径不存在。'; return 1; }
