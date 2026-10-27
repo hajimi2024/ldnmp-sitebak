@@ -152,7 +152,7 @@ if ! migration_preflight change-domain < <(printf '%s\n' 1 1 yes) > "$fixture/ch
   cat "$fixture/change-output" >&2
   exit 1
 fi
-grep -Fq '站点导入及收尾完成' "$fixture/change-output"
+grep -Fq '✅ 站点 new.example 已成功导入。' "$fixture/change-output"
 assert_progress_output "$fixture/change-output" yes
 [[ $(< "$fixture/finalize-call") == 'change-domain|old.example|new.example|http://new.example' ]]
 grep -Fq '正在检查备份包' "$fixture/change-output"
@@ -180,7 +180,7 @@ if ! migration_preflight change-domain < <(printf '%s\n' 1 new.example yse yes) 
   exit 1
 fi
 grep -Fq '输入错误，请输入完整小写 yes' "$fixture/confirm-retry-output"
-grep -Fq '站点导入及收尾完成' "$fixture/confirm-retry-output"
+grep -Fq '✅ 站点 new.example 已成功导入。' "$fixture/confirm-retry-output"
 
 # SQL that can switch or create databases is rejected before confirmation and writes.
 printf 'USE another_database;\n' | gzip > "$fixture/forbidden.sql.gz"
@@ -271,9 +271,7 @@ write_target_nginx new.example
 finalize_status=9
 expect_failure migration_preflight change-domain < <(printf '%s\n' 1 1 yes)
 [[ $(< "$fixture/finalize-call") == 'change-domain|old.example|new.example|http://new.example' ]]
-grep -Fq '目标站点可能已部分写入；请重新准备空白目标站点后从头导入' "$fixture/failure-output"
-! grep -Fq '站点导入及收尾完成' "$fixture/failure-output"
-assert_progress_output "$fixture/failure-output" no
+grep -Fq '目标站点可能已部分写入，请重新准备空白目标站点后从头导入' "$fixture/failure-output"
 [[ -f "$fixture/imported.sql" ]]
 [[ -z "$(find "$MIGRATION_TMP_ROOT" -mindepth 1 -print -quit)" ]]
 

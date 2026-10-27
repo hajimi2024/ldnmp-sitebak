@@ -20,6 +20,8 @@ mock_current_home="$old_home"
 mock_current_siteurl="$old_siteurl"
 elementor_installed=yes
 wp_fail_pattern=''
+update_fail=''
+emit_known_warnings=''
 : > "$commands"
 
 revalidate_migration_target_scope() { :; }
@@ -28,10 +30,18 @@ run_wp_cli() {
   printf '%q ' "$@" >> "$commands"
   printf '\n' >> "$commands"
   [[ -z "$wp_fail_pattern" || " $* " != *"$wp_fail_pattern"* ]] || return 71
+  if [[ "$emit_known_warnings" == yes && " $* " == *' search-replace '* ]]; then
+    printf '%s\n' \
+      'Warning: Skipping an uninitialized class "Elementor\\Core\\Logger\\Items\\Base", replacements might not be complete.' \
+      'Warning: Skipping an uninitialized class "Astra_Builder_Header", replacements might not be complete.' >&2
+  fi
   case " $* " in
     *' option get home '*) printf '%s\n' "$mock_current_home" ;;
     *' option get siteurl '*) printf '%s\n' "$mock_current_siteurl" ;;
-    *' option update home '*) mock_current_home="${@: -1}" ;;
+    *' option update home '*)
+      if [[ "$update_fail" == home ]]; then mock_current_home="${@: -1}"; return 71; fi
+      [[ "$update_fail" == home-stays ]] || mock_current_home="${@: -1}"
+      ;;
     *' option update siteurl '*) mock_current_siteurl="${@: -1}" ;;
     *' plugin is-installed elementor '*) [[ "$elementor_installed" == yes ]] ;;
     *' plugin is-active elementor '*) [[ "$elementor_installed" == yes ]] ;;
@@ -59,6 +69,56 @@ grep -Fq 'transient delete --all' "$commands"
 ! grep -Fq 'cache flush' "$commands"
 grep -Fq '历史日志或授权记录' "$fixture/change-output"
 grep -Fq 'GUID始终跳过' "$MIGRATION_LOG_FILE"
+
+# WP-CLI 已知序列化警告只在终端汇总，原始警告写入迁移日志。
+: > "$commands"
+emit_known_warnings=yes
+old_home='http://old.example'
+old_siteurl='http://old.example'
+mock_current_home="$old_home"
+mock_current_siteurl="$old_siteurl"
+elementor_installed=no
+migration_log_init warning-summary
+finalize_wordpress_migration change-domain old.example new.example https://new.example locked source_ > "$fixture/warning-output" 2>&1
+[[ $(grep -c '域名替换检测到 16 条兼容性警告' "$fixture/warning-output") == 1 ]]
+[[ $(grep -c 'WP-CLI 已知警告：' "$MIGRATION_LOG_FILE") == 16 ]]
+emit_known_warnings=''
+
+# home/siteurl 已经正确时，不再执行重复更新。
+: > "$commands"
+old_home='https://new.example'
+old_siteurl='https://new.example'
+mock_current_home="$old_home"
+mock_current_siteurl="$old_siteurl"
+elementor_installed=no
+migration_log_init already-correct
+finalize_wordpress_migration change-domain old.example new.example https://new.example locked source_ >/dev/null 2>&1
+! grep -Fq 'option update home' "$commands"
+! grep -Fq 'option update siteurl' "$commands"
+
+# 更新命令失败但复核值已正确时继续；复核仍错误则失败。
+: > "$commands"
+old_home='http://old.example'
+old_siteurl='http://old.example'
+mock_current_home="$old_home"
+mock_current_siteurl="$old_siteurl"
+update_fail=home
+elementor_installed=no
+migration_log_init update-recheck
+finalize_wordpress_migration change-domain old.example new.example https://new.example locked source_ >/dev/null 2>&1
+grep -Fq '更新命令返回失败，但复核值已经是目标网址' "$MIGRATION_LOG_FILE"
+update_fail=home-stays
+old_home='http://old.example'
+old_siteurl='http://old.example'
+mock_current_home="$old_home"
+mock_current_siteurl="$old_siteurl"
+migration_log_init update-failure
+set +e
+finalize_wordpress_migration change-domain old.example new.example https://new.example locked source_ >/dev/null 2>&1
+status=$?
+set -e
+[[ $status -ne 0 ]]
+update_fail=''
 
 
 # 保留域名且未安装 Elementor：不做全库替换，不因缺少 Elementor 失败。

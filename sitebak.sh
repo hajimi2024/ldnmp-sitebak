@@ -2,7 +2,7 @@
 
 set -Eeuo pipefail
 
-VERSION="0.4.3"
+VERSION="0.4.4"
 APP_NAME="LDNMP 单站备份恢复工具"
 
 WEB_ROOT="${SITEBAK_WEB_ROOT:-/home/web}"
@@ -22,6 +22,7 @@ WPCLI_RUN_USER=''
 MIGRATION_PROGRESS_ACTIVE=no
 MIGRATION_PROGRESS_PERCENT=0
 MIGRATION_PROGRESS_LINE_OPEN=no
+MIGRATION_KNOWN_WARNING_COUNT=0
 
 NGINX_CONF_DIRS=(
   "$WEB_ROOT/conf.d"
@@ -1640,14 +1641,44 @@ wp_url_host() {
 }
 
 run_wp_search_replace() {
-  local old="$1" new="$2" regex_mode="${3:-no}"
+  local old="$1" new="$2" regex_mode="${3:-no}" stderr_file status line
   local common=(--skip-plugins --skip-themes search-replace "$old" "$new" --all-tables-with-prefix --skip-columns=guid --precise)
   [[ "$regex_mode" != yes ]] || common+=(--regex --regex-delimiter='#')
+  stderr_file="$(mktemp "$MIGRATION_TMP_ROOT/sitebak-wpcli.XXXXXX")" || return 1
   migration_log INFO "域名替换 dry-run；旧值=$old；新值=$new；正则=$regex_mode；固定跳过列=guid"
-  run_wp_cli "${common[@]}" --dry-run >/dev/null || return 1
+  if run_wp_cli "${common[@]}" --dry-run >/dev/null 2>"$stderr_file"; then
+    status=0
+  else
+    status=$?
+  fi
+  while IFS= read -r line; do
+    if [[ "$line" == Warning:\ Skipping\ an\ uninitialized\ class\ *replacements\ might\ not\ be\ complete. ]]; then
+      ((MIGRATION_KNOWN_WARNING_COUNT+=1))
+      migration_log WARN "WP-CLI 已知警告：$line"
+    elif [[ -n "$line" ]]; then
+      printf '%s\n' "$line" >&2
+    fi
+  done < "$stderr_file"
+  rm -f -- "$stderr_file"
+  ((status == 0)) || return "$status"
   migration_log INFO "域名替换 dry-run 通过；旧值=$old；新值=$new"
   migration_log INFO "域名替换正式执行；旧值=$old；新值=$new；正则=$regex_mode；固定跳过列=guid"
-  run_wp_cli "${common[@]}" >/dev/null || return 1
+  stderr_file="$(mktemp "$MIGRATION_TMP_ROOT/sitebak-wpcli.XXXXXX")" || return 1
+  if run_wp_cli "${common[@]}" >/dev/null 2>"$stderr_file"; then
+    status=0
+  else
+    status=$?
+  fi
+  while IFS= read -r line; do
+    if [[ "$line" == Warning:\ Skipping\ an\ uninitialized\ class\ *replacements\ might\ not\ be\ complete. ]]; then
+      ((MIGRATION_KNOWN_WARNING_COUNT+=1))
+      migration_log WARN "WP-CLI 已知警告：$line"
+    elif [[ -n "$line" ]]; then
+      printf '%s\n' "$line" >&2
+    fi
+  done < "$stderr_file"
+  rm -f -- "$stderr_file"
+  ((status == 0)) || return "$status"
   migration_log INFO "域名替换正式执行完成；旧值=$old；新值=$new"
 }
 
@@ -1704,6 +1735,7 @@ finalize_wordpress_migration() {
   local mode="$1" source_domain="$2" target_domain="$3" target_url="$4" locked_identity="$5" prefix="$6"
   local old_home old_siteurl current_home current_siteurl escaped_source bare_pattern home_host siteurl_host
   migration_progress '正在检查 WordPress 与数据库连接。'
+  MIGRATION_KNOWN_WARNING_COUNT=0
   revalidate_migration_target_scope "$target_domain" "$locked_identity" "$prefix" || return 1
   run_wp_cli --skip-plugins --skip-themes core is-installed >/dev/null || { err '目标 WordPress 数据库尚未正确安装。'; return 1; }
   run_wp_cli --skip-plugins --skip-themes eval 'global $wpdb; exit($wpdb->get_var("SELECT 1") === "1" ? 0 : 1);' >/dev/null || {
@@ -1735,6 +1767,9 @@ finalize_wordpress_migration() {
     escaped_source="$(printf '%s' "$source_domain" | sed 's/[][(){}.^$*+?|\\]/\\&/g')"
     bare_pattern="(?<![A-Za-z0-9.-])${escaped_source}(?![A-Za-z0-9.-])"
     run_wp_search_replace "$bare_pattern" "$target_domain" yes || return 1
+    if ((MIGRATION_KNOWN_WARNING_COUNT > 0)); then
+      warn "域名替换检测到 ${MIGRATION_KNOWN_WARNING_COUNT} 条兼容性警告，详情已写入迁移日志。"
+    fi
     migration_progress '旧域名替换完成。'
   else
     [[ "$home_host" == "$source_domain" && "$siteurl_host" == "$source_domain" ]] || {
@@ -1746,8 +1781,35 @@ finalize_wordpress_migration() {
   migration_progress_set 91 '域名处理和网址检查完成。'
 
   revalidate_migration_target_scope "$target_domain" "$locked_identity" "$prefix" || return 1
-  run_wp_cli --skip-plugins --skip-themes option update home "$target_url" >/dev/null || return 1
-  run_wp_cli --skip-plugins --skip-themes option update siteurl "$target_url" >/dev/null || return 1
+  ensure_wp_option_target() {
+    local option="$1" target="$2" current refreshed status stderr_file line
+    current="$(run_wp_cli --skip-plugins --skip-themes option get "$option")" || return 1
+    if [[ "$current" == "$target" ]]; then
+      migration_log INFO "WordPress $option 已是目标网址，跳过重复修改。"
+      return 0
+    fi
+    stderr_file="$(mktemp "$MIGRATION_TMP_ROOT/sitebak-wpcli.XXXXXX")" || return 1
+    if run_wp_cli --skip-plugins --skip-themes option update "$option" "$target" >/dev/null 2>"$stderr_file"; then
+      rm -f -- "$stderr_file"
+      return 0
+    else
+      status=$?
+    fi
+    refreshed="$(run_wp_cli --skip-plugins --skip-themes option get "$option" 2>/dev/null || true)"
+    if [[ "$refreshed" == "$target" ]]; then
+      while IFS= read -r line; do
+        [[ -n "$line" ]] && migration_log WARN "WordPress $option 更新提示：$line"
+      done < "$stderr_file"
+      migration_log WARN "WordPress $option 更新命令返回失败，但复核值已经是目标网址，继续收尾。"
+      rm -f -- "$stderr_file"
+      return 0
+    fi
+    cat -- "$stderr_file" >&2
+    rm -f -- "$stderr_file"
+    return "$status"
+  }
+  ensure_wp_option_target home "$target_url" || return 1
+  ensure_wp_option_target siteurl "$target_url" || return 1
   migration_progress '正在处理 Elementor。'
   elementor_finalize "$mode" "$source_domain" "$target_url" || return 1
   migration_progress_set 94 'Elementor 检查和修复完成。'
@@ -2328,12 +2390,12 @@ migration_preflight() (
   locked_identity="$MIGRATION_TARGET_IDENTITY"
   finalize_wordpress_migration "$mode" "$MIGRATION_SOURCE_DOMAIN" "$target_domain" "$target_url" "$locked_identity" "$MIGRATION_SOURCE_TABLE_PREFIX" || {
     migration_log ERROR '文件和数据库已导入，但 WordPress 收尾失败；目标站点可能已部分写入。'
-    err 'WordPress 收尾失败，目标站点可能已部分写入；请重新准备空白目标站点后从头导入。'
+    err "❌ 站点 ${target_domain:-目标站点} 导入失败；WordPress 收尾未完成。目标站点可能已部分写入，请重新准备空白目标站点后从头导入。"
     return 1
   }
   migration_progress_set 100 '站点导入及 WordPress 收尾全部完成。'
   migration_progress_end
-  ok '站点导入及收尾完成。'
+  ok "✅ 站点 $target_domain 已成功导入。"
   info '本阶段未修改 Nginx、SSL，也未重启共享容器。'
   ok "操作日志已保存：$MIGRATION_LOG_FILE"
 )
