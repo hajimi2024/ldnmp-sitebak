@@ -2,7 +2,7 @@
 
 set -Eeuo pipefail
 
-VERSION="0.6.3"
+VERSION="0.6.4"
 APP_NAME="LDNMP 单站备份恢复工具"
 
 WEB_ROOT="${SITEBAK_WEB_ROOT:-/home/web}"
@@ -310,6 +310,10 @@ menu_separator() {
   printf '%s%s%s\n' "$CYAN" '------------------------' "$RESET"
 }
 
+wide_separator() {
+  printf '%s%s%s\n' "$CYAN" '---------------------------------------------------' "$RESET"
+}
+
 menu_item() {
   local text="$1" number="${1%% *}"
   printf '%s%s%s%s%s' "$NUMBER" "$number" "$BLUE" "${text#"$number"}" "$RESET"
@@ -342,7 +346,9 @@ render_return_section() {
 
 render_main_menu() {
   printf '%s操作%s\n' "$BOLD" "$RESET"
-  menu_separator
+  printf '\n'
+  wide_separator
+  printf '\n'
   menu_pair '1.  列出 WordPress 站点' '2.  备份单个站点' 23
   menu_row_gap
   menu_pair '3.  查看备份文件' '4.  恢复单个站点' 16
@@ -398,8 +404,9 @@ EOF
   printf '%s快照目录：%s%s%s  -  %s备注：%ssnapshot%s\n' "$NUMBER" "$LIGHT_GREEN" "$BACKUP_DIR" "$RESET" "$NUMBER" "$LIGHT_GREEN" "$RESET"
   printf '%s日志目录：%s%s%s\n' "$NUMBER" "$LIGHT_GREEN" "$MIGRATION_LOG_DIR" "$RESET"
   printf '%s当前服务器：%s%s%s\n' "$NUMBER" "$PURPLE" "$(get_current_server_label)" "$RESET"
-  printf '%sGitHub：%s%s%s%s%s%s\n' "$NUMBER" "$BLUE" "$NO_UNDERLINE" "$LINK_OPEN" "$PROJECT_URL" "$LINK_CLOSE" "$RESET"
-  printf '%s%s%s\n\n' "$CYAN" '---------------------------------------------------' "$RESET"
+  printf '%sGitHub：%s%s%s%s%s%s\n\n' "$NUMBER" "$BLUE" "$NO_UNDERLINE" "$LINK_OPEN" "$PROJECT_URL" "$LINK_CLOSE" "$RESET"
+  wide_separator
+  printf '\n'
 }
 
 valid_domain() {
