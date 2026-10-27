@@ -2,7 +2,7 @@
 
 set -Eeuo pipefail
 
-VERSION="0.4.9"
+VERSION="0.5.0"
 APP_NAME="LDNMP 单站备份恢复工具"
 
 WEB_ROOT="${SITEBAK_WEB_ROOT:-/home/web}"
@@ -2270,7 +2270,7 @@ migration_preflight() (
   local tmp='' status=0 target_owner locked_identity archive_sha256 database_imported=no files_replaced=no backup_intro=''
   local target_db_user target_db_password target_db_host
   case "$mode" in
-    change-domain) ;;
+    change-domain) backup_intro='适用于跨服务器导入并更换域名' ;;
     keep-domain) backup_intro='适用于跨服务器导入并保留域名' ;;
     *) err '未知迁移模式。'; return 1 ;;
   esac

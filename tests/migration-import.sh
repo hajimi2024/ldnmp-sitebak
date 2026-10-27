@@ -153,6 +153,7 @@ if ! migration_preflight change-domain < <(printf '%s\n' 1 1 new.example yes) > 
   exit 1
 fi
 grep -Fq '✅ 站点 new.example 已成功导入。' "$fixture/change-output"
+grep -Fq '适用于跨服务器导入并更换域名' "$fixture/change-output"
 assert_progress_output "$fixture/change-output" yes
 [[ $(< "$fixture/finalize-call") == 'change-domain|old.example|new.example|http://new.example' ]]
 grep -Fq '正在检查备份包' "$fixture/change-output"
