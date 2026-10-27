@@ -2,7 +2,7 @@
 
 set -Eeuo pipefail
 
-VERSION="0.4.6"
+VERSION="0.4.7"
 APP_NAME="LDNMP 单站备份恢复工具"
 
 WEB_ROOT="${SITEBAK_WEB_ROOT:-/home/web}"
@@ -293,6 +293,7 @@ render_main_menu() {
   menu_row_gap
   menu_pair '7.  更新脚本' '' 12
   menu_row_gap
+  menu_separator
   menu_item '8.  站点导入 ♻️'; printf '\n'
   menu_separator
   menu_item '0.  退出'; printf '\n'

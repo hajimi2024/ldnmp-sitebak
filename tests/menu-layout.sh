@@ -76,15 +76,17 @@ assert_layout('main-wide', [
     ('1.  列出 WordPress 站点', '2.  备份单个站点'),
     ('3.  查看备份文件', '4.  恢复单个站点'),
     ('5.  快照管理', '6.  删除旧备份'),
-], separator_count=3)
+], separator_count=4)
 assert_layout('snapshots-wide', [
     ('1.  创建完整快照', '2.  查看快照'),
     ('3.  恢复完整快照', '4.  删除快照'),
 ])
 
 main = read_plain('main-wide').splitlines()
-assert main.count('-' * 24) == 3, main
-assert main[-4:] == ['8.  站点导入 ♻️', '-' * 24, '0.  退出', '-' * 24], main
+assert main.count('-' * 24) == 4, main
+site_import_index = main.index('8.  站点导入 ♻️')
+assert main[site_import_index - 1:site_import_index + 2] == ['-' * 24, '8.  站点导入 ♻️', '-' * 24], main
+assert main[-3:] == ['-' * 24, '0.  退出', '-' * 24], main
 
 assert_layout('migration-wide', [
     ('1.  导入并更换域名', '2.  导入并保留域名'),
@@ -98,7 +100,7 @@ narrow = read_plain('main-narrow')
 assert '1.  列出 WordPress 站点\n2.  备份单个站点' in narrow
 assert '2.  备份单个站点\n\n3.  查看备份文件' in narrow
 assert '7.  更新脚本\n' in narrow
-assert ('7.  更新脚本\n\n8.  站点导入 ♻️\n' +
+assert ('7.  更新脚本\n\n' + '-' * 24 + '\n8.  站点导入 ♻️\n' +
         '-' * 24 + '\n0.  退出') in narrow
 assert '                 2.  备份单个站点' not in narrow
 
