@@ -2,7 +2,7 @@
 
 set -Eeuo pipefail
 
-VERSION="0.4.7"
+VERSION="0.4.8"
 APP_NAME="LDNMP 单站备份恢复工具"
 
 WEB_ROOT="${SITEBAK_WEB_ROOT:-/home/web}"
@@ -461,12 +461,16 @@ list_sites_array() {
 }
 
 select_domain() {
-  local title="${1:-请选择站点}"
+  local title="${1:-请选择站点}" intro="${2:-}"
   local sites=()
   mapfile -t sites < <(list_sites_array)
 
   while true; do
     header >&2
+    if [[ -n "$intro" ]]; then
+      printf '%s%s%s\n' "$BOLD" "$intro" "$RESET" >&2
+      menu_separator >&2
+    fi
     printf '%s%s：%s\n' "$BOLD" "$title" "$RESET" >&2
     menu_separator >&2
     if ((${#sites[@]} == 0)); then
@@ -2220,7 +2224,7 @@ backup_menu() {
 restore_menu() {
   local domain archive
   # Scan current sites first, then limit the restore list to the chosen domain.
-  domain="$(select_domain "请选择要恢复的站点")" || return 0
+  domain="$(select_domain "请选择要恢复的站点" "适用于在当前服务器恢复已有站点的普通备份。")" || return 0
   archive="$(select_backup "$domain" backup)" || return 0
   restore_site "$archive" '' "$domain"
 }

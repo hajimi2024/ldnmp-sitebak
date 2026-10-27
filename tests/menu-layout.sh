@@ -20,6 +20,12 @@ touch "$fixture/html/example.com/wp-config.php"
   set +e
   SITE_ROOT="$fixture/html"
   header() { :; }
+  select_domain '请选择要恢复的站点' '适用于在当前服务器恢复已有站点的普通备份。' < <(printf '0\n')
+) > /dev/null 2> "$fixture/restore-domain-selection" || true
+(
+  set +e
+  SITE_ROOT="$fixture/html"
+  header() { :; }
   select_existing_domain '请选择目标站点' < <(printf '0\n')
 ) > /dev/null 2> "$fixture/target-selection" || true
 (
@@ -118,6 +124,12 @@ for name, title, body in [
     body_index = lines.index(body)
     assert lines[body_index + 1:body_index + 4] == [
         '-' * 24, '0.  返回上一级', '-' * 24], lines
+
+restore_lines = read_plain('restore-domain-selection').splitlines()
+intro_index = restore_lines.index('适用于在当前服务器恢复已有站点的普通备份。')
+title_index = restore_lines.index('请选择要恢复的站点：')
+assert restore_lines[intro_index + 1] == '-' * 24, restore_lines
+assert title_index == intro_index + 2, restore_lines
 
 backup_selection = read_plain('backup-selection')
 assert ('example.com 可用普通备份：\n' + '-' * 24 + '\n' in backup_selection), backup_selection
