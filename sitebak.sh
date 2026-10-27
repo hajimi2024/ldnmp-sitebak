@@ -659,7 +659,7 @@ prepare_db_client() {
     err "数据库位置：${DB_CONTAINER:-$host}。LDNMP 请确认 mysql 容器已运行；自定义容器可设置 SITEBAK_DB_CONTAINER。"
     return 1
   fi
-  info "数据库工具：${DB_CONTAINER:+容器 $DB_CONTAINER / }$DB_CLIENT" >&2
+  info "已连接数据库服务：${DB_CONTAINER:-本机}" >&2
 }
 
 run_db_client() {
