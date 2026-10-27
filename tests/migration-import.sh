@@ -8,6 +8,7 @@ trap 'rm -rf -- "$fixture"' EXIT
 fixture_stamp=20261026_130000
 db_tables_file=''
 import_status=0
+finalize_status=0
 fixture_server_identity='target-vps / machine:0123456789abcdef'
 
 clear_screen() { :; }
@@ -27,8 +28,11 @@ get_target_server_identity() { printf '%s' "$fixture_server_identity"; }
 get_target_server_username() { printf '%s' fixture-user; }
 get_target_server_display() { printf '%s' 'target-vps（2C / 4G）'; }
 prepare_wp_cli_environment() { migration_log INFO 'MOCK WP-CLI 环境检查通过。'; }
-cleanup_wp_cli_environment() { :; }
-finalize_wordpress_migration() { migration_log INFO "MOCK 阶段四收尾：$1 / $2 / $3"; }
+finalize_wordpress_migration() {
+  printf '%s|%s|%s|%s\n' "$1" "$2" "$3" "$4" > "$fixture/finalize-call"
+  ((finalize_status == 0)) || return "$finalize_status"
+  migration_log INFO "MOCK 阶段四收尾：$1 / $2 / $3"
+}
 run_mysqldump() { printf '%s\n' 'CREATE TABLE `source_options` (`option_id` bigint);'; }
 run_mysql() {
   if [[ " $* " == *' SHOW TABLES '* ]]; then
@@ -75,8 +79,10 @@ start_case() {
   CERT_DIRS=("$fixture/$name/certs")
   db_tables_file="$fixture/$name/db-tables"
   import_status=0
+  finalize_status=0
   fixture_server_identity='target-vps / machine:0123456789abcdef'
   rm -f -- "$fixture/imported.sql"
+  rm -f -- "$fixture/finalize-call"
   mkdir -p "$SITE_ROOT" "$BACKUP_DIR" "$MIGRATION_TMP_ROOT" "${NGINX_CONF_DIRS[0]}" "${CERT_DIRS[0]}"
   : > "$db_tables_file"
 }
@@ -124,6 +130,7 @@ if ! migration_preflight change-domain < <(printf '%s\n' 1 1 yes) > "$fixture/ch
   exit 1
 fi
 grep -Fq '站点导入及收尾完成' "$fixture/change-output"
+[[ $(< "$fixture/finalize-call") == 'change-domain|old.example|new.example|http://new.example' ]]
 grep -Fq '正在检查备份包' "$fixture/change-output"
 grep -Fq '正在导入目标数据库：target_db' "$fixture/change-output"
 grep -Fq '正在替换目标 WordPress Root' "$fixture/change-output"
@@ -170,6 +177,7 @@ if ! migration_preflight keep-domain < <(printf '%s\n' 1 1 yes) > "$fixture/keep
   exit 1
 fi
 grep -Fq '操作类型：导入并保留域名' "$fixture/keep-output"
+[[ $(< "$fixture/finalize-call") == 'keep-domain|same.example|same.example|http://same.example' ]]
 [[ $(< "$SITE_ROOT/same.example/index.php") == source:same.example ]]
 [[ $(parse_migration_wp_define "$SITE_ROOT/same.example/wp-config.php" DB_NAME) == same_target_db ]]
 [[ $(parse_wp_table_prefix "$SITE_ROOT/same.example/wp-config.php") == source_ ]]
@@ -214,6 +222,19 @@ cp -a "$SITE_ROOT/new.example" "$fixture/import-failure-before"
 expect_failure migration_preflight change-domain < <(printf '%s\n' 1 1 yes)
 grep -Fq '数据库导入失败' "$fixture/failure-output"
 diff -r "$fixture/import-failure-before" "$SITE_ROOT/new.example"
+[[ -z "$(find "$MIGRATION_TMP_ROOT" -mindepth 1 -print -quit)" ]]
+
+# 收尾失败不能报导入成功，已写入状态必须明确并清理临时目录。
+start_case finalize-failure
+create_source_backup old.example direct source_db
+create_target_site new.example nested target_db
+write_target_nginx new.example
+finalize_status=9
+expect_failure migration_preflight change-domain < <(printf '%s\n' 1 1 yes)
+[[ $(< "$fixture/finalize-call") == 'change-domain|old.example|new.example|http://new.example' ]]
+grep -Fq '目标站点可能已部分写入；请重新准备空白目标站点后从头导入' "$fixture/failure-output"
+! grep -Fq '站点导入及收尾完成' "$fixture/failure-output"
+[[ -f "$fixture/imported.sql" ]]
 [[ -z "$(find "$MIGRATION_TMP_ROOT" -mindepth 1 -print -quit)" ]]
 
 # A server identity change after yes stops before either database or file writes.

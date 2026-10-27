@@ -33,7 +33,6 @@ get_target_server_identity() { printf '%s' "$fixture_server_identity"; }
 get_target_server_username() { printf '%s' fixture-user; }
 get_target_server_display() { printf '%s' 'target-vps（2C / 4G）'; }
 prepare_wp_cli_environment() { migration_log INFO 'MOCK WP-CLI 环境检查通过。'; }
-cleanup_wp_cli_environment() { :; }
 finalize_wordpress_migration() { migration_log INFO "MOCK 阶段四收尾：$1 / $2 / $3"; }
 run_mysqldump() { printf '%s\n' 'CREATE TABLE `wp_options` (`option_id` bigint);'; }
 run_mysql() {

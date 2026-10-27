@@ -23,6 +23,7 @@ wp_fail_pattern=''
 : > "$commands"
 
 revalidate_migration_target_scope() { :; }
+original_run_wp_cli="$(declare -f run_wp_cli)"
 run_wp_cli() {
   printf '%q ' "$@" >> "$commands"
   printf '\n' >> "$commands"
@@ -59,11 +60,6 @@ grep -Fq 'transient delete --all' "$commands"
 grep -Fq '历史日志或授权记录' "$fixture/change-output"
 grep -Fq 'GUID始终跳过' "$MIGRATION_LOG_FILE"
 
-# 阶段四中途失败后，即使 home/siteurl 已是目标网址，精确映射仍可安全续跑。
-: > "$commands"
-finalize_wordpress_migration change-domain old.example new.example https://new.example locked source_ > "$fixture/change-resume-output" 2>&1
-[[ $(grep -c -- '--dry-run' "$commands") == 4 ]]
-grep -Fq 'WordPress 配置与数据库状态检查完成' "$fixture/change-resume-output"
 
 # 保留域名且未安装 Elementor：不做全库替换，不因缺少 Elementor 失败。
 : > "$commands"
@@ -95,105 +91,92 @@ set -e
 ! grep -Fq '阶段四收尾完成' "$fixture/wp-failure"
 wp_fail_pattern=''
 
-# 宿主机路径只能映射到 PHP 容器实际挂载内。
-mkdir -p "$fixture/mounted/example/wordpress" "$fixture/outside"
-mock_wp_present=yes
-docker() {
-  case " $* " in
-    *' inspect '*'{{.State.Running}}'*) printf 'true\n' ;;
-    *' inspect '*'{{range .Mounts}}'*) printf '%s\t%s\n' "$fixture/mounted" /var/www/html ;;
-    *' exec '*' command -v wp '*) [[ "$mock_wp_present" != yes ]] || printf '/usr/local/bin/wp\n'; return 0 ;;
-    *' exec '*' echo PHP_VERSION'*) printf '8.5.12' ;;
-    *' exec '*' cli version '*) printf 'WP-CLI 2.12.0\n' ;;
-    *' exec '*) : ;;
-    *' cp '*) : ;;
-    *) return 1 ;;
-  esac
-}
-[[ $(map_host_path_to_container php "$fixture/mounted/example/wordpress") == /var/www/html/example/wordpress ]]
-set +e
-map_host_path_to_container php "$fixture/outside" > "$fixture/outside-map" 2>&1
-status=$?
-set -e
-[[ $status -ne 0 ]]
+# 与 WP Box 共用固定镜像、网络及一次性容器；模拟首次拉取和缓存复用。
+eval "$original_run_wp_cli"
+[[ "$WPCLI_IMAGE" == 'wordpress:cli-2.12.0-php8.3@sha256:2b5e9d4d3e51909dca1aaa4732e9f5e5bf0377c2114dbd8ff39f060bff202586' ]]
+[[ "$WPCLI_NETWORK" == web_default ]]
+root="$fixture/target.example/wordpress"
+mkdir -p "$root"
 DB_HOST=mysql
 DB_USER=target_user
 DB_PASSWORD=target_password
 DB_NAME=target_db
-prepare_wp_cli_environment "$fixture/mounted/example/wordpress" "$fixture"
-[[ "$WPCLI_CONTAINER" == php && "$WPCLI_CONTAINER_ROOT" == /var/www/html/example/wordpress ]]
-[[ "${WPCLI_COMMAND[*]}" == /usr/local/bin/wp ]]
-
-# 容器没有 wp 时只准备固定版本、校验过的临时 Phar，并可清理。
-mock_wp_present=no
-curl() {
-  local output=''
-  while (($#)); do
-    if [[ "$1" == -o ]]; then output="$2"; break; fi
-    shift
-  done
-  printf 'mock wp-cli phar\n' > "$output"
+docker_calls="$fixture/docker-calls"
+: > "$docker_calls"
+image_cached=no
+docker_fail=''
+mock_owner=82:82
+docker() {
+  printf '%s ' "$@" >> "$docker_calls"
+  printf '\n' >> "$docker_calls"
+  case " $* " in
+    *' network inspect web_default '*) return 0 ;;
+    *' image inspect '*) [[ "$image_cached" == yes ]] ;;
+    *' pull '*) [[ "$docker_fail" != pull ]] || return 1; image_cached=yes ;;
+    *' run '*)
+      [[ "$docker_fail" != run ]] || return 1
+      case " $* " in
+        *' --entrypoint php '*) [[ "$docker_fail" != db ]] ;;
+        *' cli version '*) printf 'WP-CLI 2.12.0\n' ;;
+        *' --info '*) printf 'PHP version:\t8.3.0\n' ;;
+        *) : ;;
+      esac
+      ;;
+    *) return 1 ;;
+  esac
 }
-WPCLI_SHA256="$(printf 'mock wp-cli phar\n' | sha256sum | awk '{print $1}')"
-prepare_wp_cli_environment "$fixture/mounted/example/wordpress" "$fixture"
-[[ "${WPCLI_COMMAND[0]}" == php && "${WPCLI_COMMAND[1]}" == /tmp/sitebak-wp-cli-* ]]
-[[ -n "$WPCLI_TEMP_CONTAINER_PATH" ]]
-cleanup_wp_cli_environment
-[[ -z "$WPCLI_TEMP_CONTAINER_PATH" ]]
-
-# 已有非空站点只有在存在可核验的阶段三完成日志和原始备份指纹时才可继续。
-target_root="$SITE_ROOT/rovetree.com/wordpress"
-mkdir -p "$target_root"
-cat > "$target_root/wp-config.php" <<'EOF'
-<?php
-define('DB_NAME', 'rovetree_com');
-define('DB_USER', 'target_user');
-define('DB_PASSWORD', 'target_password');
-define('DB_HOST', 'mysql');
-$table_prefix = 'source_';
-EOF
-archive="$BACKUP_DIR/miniqq.shop_20261025_155627.tar.gz"
-printf 'original backup evidence\n' > "$archive"
-archive_sha="$(sha256sum "$archive" | awk '{print $1}')"
-record_log="$MIGRATION_LOG_DIR/migration_change-domain_20261025_160000.legacy.log"
-cat > "$record_log" <<EOF
-2026-10-25T16:00:00+08:00 [INFO] 已选择普通备份：${archive##*/}
-2026-10-25T16:00:01+08:00 [INFO] 备份预检通过；源域名=miniqq.shop；源数据库=miniqq_shop；迁移表前缀=source_；备份指纹=$archive_sha
-2026-10-25T16:00:02+08:00 [INFO] 目标预检通过；服务器=target-vps / machine:0123456789abcdef；用户=root；目标域名=rovetree.com；目标协议=https；目标属主=1000:1000；数据库=rovetree_com；目标身份=old-lock
-2026-10-25T16:00:03+08:00 [INFO] 目标 WordPress Root 导入完成：$target_root
-2026-10-25T16:00:04+08:00 [INFO] 阶段三写入状态；数据库已导入=yes；文件已替换=yes
-EOF
-[[ $(list_stage3_completion_records | wc -l) == 1 ]]
-
-get_target_server_identity() { printf '%s' 'target-vps / machine:0123456789abcdef'; }
-validate_migration_target_scope() {
-  MIGRATION_TARGET_WP_ROOT="$(dirname "$2")"
+stat() {
+  if [[ "${1:-}" == -c && "${2:-}" == %u:%g ]]; then
+    printf '%s\n' "$mock_owner"
+  else
+    command stat "$@"
+  fi
 }
-prepare_db_client() {
-  DB_CONTAINER=mysql
-  DB_CLIENT=mysql
-  DB_CONNECT_ARGS=(-h 127.0.0.1 --protocol=TCP -P 3306)
-}
-run_mysql() { :; }
-detect_target_scheme() { printf 'https'; }
-capture_migration_target_identity() {
-  MIGRATION_TARGET_IDENTITY=current-lock
-  MIGRATION_TARGET_SERVER='target-vps / machine:0123456789abcdef'
-  MIGRATION_TARGET_SERVER_USERNAME=root
-  MIGRATION_TARGET_DB_NAME="$DB_NAME"
-}
-prepare_wp_cli_environment() { migration_log INFO 'MOCK continue WP-CLI ready'; }
-cleanup_wp_cli_environment() { :; }
-finalize_wordpress_migration() {
-  printf '%s|%s|%s|%s\n' "$1" "$2" "$3" "$4" > "$fixture/continued"
-  migration_log INFO '阶段四收尾完成；MOCK'
-}
-continue_migration_finalize < <(printf '%s\n' 1 yes) > "$fixture/continue-output" 2>&1
-[[ $(< "$fixture/continued") == 'change-domain|miniqq.shop|rovetree.com|https://rovetree.com' ]]
-grep -Fq '站点域名替换与 WordPress 修复完成' "$fixture/continue-output"
-[[ -z "$(list_stage3_completion_records)" ]]
+prepare_wp_cli_environment "$root" > "$fixture/pull-output"
+[[ "$image_cached" == yes ]]
+grep -Fq '正在拉取并缓存' "$fixture/pull-output"
+grep -Fq -- '--network web_default' "$docker_calls"
+grep -Fq -- '--user 82:82' "$docker_calls"
+grep -Fq -- '--cap-drop ALL' "$docker_calls"
+grep -Fq -- '--security-opt no-new-privileges' "$docker_calls"
+grep -Fq -- '--read-only' "$docker_calls"
+grep -Fq -- '--tmpfs /tmp:rw,noexec,nosuid,size=64m' "$docker_calls"
+grep -Fq -- '--entrypoint php' "$docker_calls"
+grep -Fq -- '--mount type=bind,source=' "$docker_calls"
+grep -Fq -- ',target=/var/www/html' "$docker_calls"
+! grep -Eq ' exec | cp |curl|phar' "$docker_calls"
+! grep -Fq 'target_password' "$docker_calls"
+[[ $(grep -c '^pull ' "$docker_calls") == 1 ]]
+: > "$docker_calls"
+prepare_wp_cli_environment "$root" > "$fixture/reuse-output"
+grep -Fq '已缓存' "$fixture/reuse-output"
+! grep -Fq ' pull ' "$docker_calls"
+run_wp_cli core is-installed
+grep -Fq -- '--path=/var/www/html' "$docker_calls"
+[[ "$image_cached" == yes ]]
 
-rm -f -- "$record_log"
-[[ -z "$(list_stage3_completion_records)" ]]
+# 拉取失败、容器启动失败、数据库连接失败均在写入前中止。
+image_cached=no
+docker_fail=pull
+if prepare_wp_cli_environment "$root" > "$fixture/pull-fail" 2>&1; then exit 1; fi
+grep -Fq '镜像拉取失败' "$fixture/pull-fail"
+docker_fail=run
+image_cached=yes
+if prepare_wp_cli_environment "$root" > "$fixture/run-fail" 2>&1; then exit 1; fi
+grep -Fq '一次性容器无法启动' "$fixture/run-fail"
+docker_fail=db
+if prepare_wp_cli_environment "$root" > "$fixture/db-fail" 2>&1; then exit 1; fi
+grep -Fq '无法通过目标凭据连接' "$fixture/db-fail"
+docker_fail=''
+WPCLI_TARGET_ROOT="$fixture/missing-site"
+if run_wp_cli core is-installed > "$fixture/root-change-fail" 2>&1; then exit 1; fi
+grep -Fq '目标 WordPress Root 无法验证' "$fixture/root-change-fail"
+mock_owner=0:0
+if prepare_wp_cli_environment "$root" > "$fixture/root-owner-fail" 2>&1; then exit 1; fi
+grep -Fq '必须是非 root 用户' "$fixture/root-owner-fail"
 
-printf 'PASS: stage-four URL, GUID, Elementor, failure, container scope and legacy stage-three continuation\n'
+# 独立继续逻辑和旧安装方式已完全移除。
+! declare -F continue_migration_finalize >/dev/null
+! declare -F list_stage3_completion_records >/dev/null
+! declare -F cleanup_wp_cli_environment >/dev/null
+printf 'PASS: URL, GUID, Elementor, WP Box image, cached pull and isolated container\n'

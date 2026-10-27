@@ -39,13 +39,12 @@ grep -Fq 'DB_PASSWORD=[REDACTED]' "$fixture/recent"
   trap - EXIT
   header() { :; }
   migration_preflight() { printf 'ACTION:%s\n' "$1"; }
-  continue_migration_finalize() { printf 'ACTION:continue-finalize\n'; }
   show_recent_migration_log() { printf 'ACTION:recent-log\n'; }
-  migration_menu < <(printf '%s\n' invalid 1 0 2 0 3 0 4 0 0)
+  migration_menu < <(printf '%s\n' invalid 1 0 2 0 3 0 0)
 ) > "$fixture/menu-routing"
-grep -Fq '无效的选择，请输入 0 至 4' "$fixture/menu-routing"
+grep -Fq '无效的选择，请输入 0 至 3' "$fixture/menu-routing"
 mapfile -t actions < <(grep -o 'ACTION:[^[:space:]]*' "$fixture/menu-routing" | cut -d: -f2-)
-[[ ${actions[*]} == 'change-domain keep-domain continue-finalize recent-log' ]]
+[[ ${actions[*]} == 'change-domain keep-domain recent-log' ]]
 
 (
   trap - EXIT
