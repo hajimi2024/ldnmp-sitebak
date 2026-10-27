@@ -162,7 +162,7 @@ grep -Fq '操作类型：导入并更换域名' "$fixture/change-output"
 diff -r "$fixture/target-before" "$SITE_ROOT/target.example"
 diff -r "$fixture/unrelated-before" "$SITE_ROOT/zzz.example"
 [[ -z "$(find "$MIGRATION_TMP_ROOT" -mindepth 1 -print -quit)" ]]
-latest_log="$(find "$MIGRATION_LOG_DIR" -type f -name 'migration_change-domain_*.log' -print -quit)"
+latest_log="$(find "$MIGRATION_LOG_DIR" -type f -name '*_import-change_*.log' -print -quit)"
 [[ -f "$latest_log" && $(stat -c '%a' "$latest_log") == 600 ]]
 grep -Fq '源域名=source.example' "$latest_log"
 grep -Fq '目标域名=target.example' "$latest_log"

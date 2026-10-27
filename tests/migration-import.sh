@@ -187,7 +187,7 @@ grep -Fq '✅ 站点 new.example 已成功导入。' "$fixture/confirm-retry-out
 printf 'USE another_database;\n' | gzip > "$fixture/forbidden.sql.gz"
 expect_failure validate_migration_sql_payload "$fixture/forbidden.sql.gz"
 grep -Fq '创建、删除或切换数据库语句' "$fixture/failure-output"
-latest_log="$(find "$MIGRATION_LOG_DIR" -type f -name 'migration_change-domain_*.log' -print -quit)"
+latest_log="$(find "$MIGRATION_LOG_DIR" -type f -name '*_import-change_*.log' -print -quit)"
 grep -Fq '目标数据库导入完成：target_db' "$latest_log"
 grep -Fq '目标 WordPress Root 导入完成' "$latest_log"
 grep -Fq '站点导入写入状态；数据库已导入=yes；文件已替换=yes' "$latest_log"
@@ -259,7 +259,7 @@ write_target_nginx new.example
 wpcli_status=8
 cp -a "$SITE_ROOT/new.example" "$fixture/wpcli-before"
 expect_failure migration_preflight change-domain < <(printf '%s\n' 1 1 new.example)
-wpcli_log="$(find "$MIGRATION_LOG_DIR" -type f -name 'migration_change-domain_*.log' -print -quit)"
+wpcli_log="$(find "$MIGRATION_LOG_DIR" -type f -name '*_import-change_*.log' -print -quit)"
 grep -Fq 'WP-CLI 环境检查失败，尚未写入目标站点' "$wpcli_log"
 diff -r "$fixture/wpcli-before" "$SITE_ROOT/new.example"
 [[ ! -e "$fixture/imported.sql" ]]

@@ -2,7 +2,7 @@
 
 set -Eeuo pipefail
 
-VERSION="0.5.1"
+VERSION="0.6.0"
 APP_NAME="LDNMP 单站备份恢复工具"
 
 WEB_ROOT="${SITEBAK_WEB_ROOT:-/home/web}"
@@ -11,9 +11,12 @@ BACKUP_DIR="${SITEBAK_BACKUP_DIR:-/home}"
 INSTALL_PATH="${SITEBAK_INSTALL_PATH:-/usr/local/bin/kk}"
 UPDATE_URL="${SITEBAK_UPDATE_URL:-https://raw.githubusercontent.com/hajimi2024/ldnmp-sitebak/main/sitebak.sh}"
 PROJECT_URL="https://github.com/hajimi2024/ldnmp-sitebak"
-MIGRATION_LOG_DIR="${SITEBAK_MIGRATION_LOG_DIR:-/var/log/sitebak}"
+MIGRATION_LOG_DIR="${SITEBAK_MIGRATION_LOG_DIR:-/home/sitebak-logs}"
+MIGRATION_LEGACY_LOG_DIR="${SITEBAK_LEGACY_MIGRATION_LOG_DIR:-/var/log/sitebak}"
 MIGRATION_TMP_ROOT="${SITEBAK_MIGRATION_TMP_ROOT:-/tmp}"
 MIGRATION_LOG_FILE=''
+MIGRATION_LOG_STAMP=''
+MIGRATION_LOG_OPERATION=''
 WPCLI_IMAGE='wordpress:cli-2.12.0-php8.3@sha256:2b5e9d4d3e51909dca1aaa4732e9f5e5bf0377c2114dbd8ff39f060bff202586'
 WPCLI_NETWORK='web_default'
 WPCLI_WORKDIR='/var/www/html'
@@ -82,14 +85,15 @@ sanitize_migration_log_text() {
 }
 
 migration_log_init() {
-  local mode="${1:-migration}" stamp old_umask created
+  local mode="${1:-migration}" stamp old_umask created operation
   need_cmd install mktemp chmod date sed
   install -d -m 0700 "$MIGRATION_LOG_DIR"
   chmod 0700 "$MIGRATION_LOG_DIR"
-  stamp="$(date +'%Y%m%d_%H%M%S')"
+  stamp="$(date +'%Y%m%d-%H%M%S')"
+  operation="$(migration_log_filename_operation "$mode")"
   old_umask="$(umask)"
   umask 077
-  if ! created="$(mktemp "$MIGRATION_LOG_DIR/migration_${mode}_${stamp}.XXXXXX.log")"; then
+  if ! created="$(mktemp "$MIGRATION_LOG_DIR/${stamp}_${operation}_unknown-to-unknown_XXXXXX.log")"; then
     umask "$old_umask"
     err "无法创建迁移日志：$MIGRATION_LOG_DIR"
     return 1
@@ -97,7 +101,46 @@ migration_log_init() {
   umask "$old_umask"
   chmod 0600 "$created"
   MIGRATION_LOG_FILE="$created"
+  MIGRATION_LOG_STAMP="$stamp"
+  MIGRATION_LOG_OPERATION="$operation"
   migration_log INFO "迁移任务已创建；模式=$mode"
+}
+
+migration_log_filename_operation() {
+  case "${1:-}" in
+    change-domain) printf 'import-change' ;;
+    keep-domain) printf 'import-keep' ;;
+    *) printf 'migration' ;;
+  esac
+}
+
+sanitize_log_component() {
+  local value="${1:-unknown}"
+  value="$(printf '%s' "$value" | sed -E 's/[^A-Za-z0-9._-]+/-/g; s/^-+//; s/-+$//')"
+  [[ -n "$value" ]] || value='unknown'
+  printf '%s' "$value"
+}
+
+migration_log_finalize_name() {
+  local mode="${1:-migration}" source_domain="${2:-unknown}" target_domain="${3:-unknown}"
+  local source_name target_name old_file base suffix final_file
+  [[ -n "$MIGRATION_LOG_FILE" && -f "$MIGRATION_LOG_FILE" ]] || return 1
+  need_cmd mv chmod sed
+  source_name="$(sanitize_log_component "$source_domain")"
+  target_name="$(sanitize_log_component "$target_domain")"
+  old_file="$MIGRATION_LOG_FILE"
+  base="${old_file##*/}"
+  base="${base%.log}"
+  suffix="${base##*_}"
+  final_file="$MIGRATION_LOG_DIR/${MIGRATION_LOG_STAMP}_${MIGRATION_LOG_OPERATION}_${source_name}-to-${target_name}_${suffix}.log"
+  if [[ "$old_file" != "$final_file" ]]; then
+    mv -- "$old_file" "$final_file"
+    chmod 0600 "$final_file"
+    MIGRATION_LOG_FILE="$final_file"
+  fi
+  migration_log INFO "操作类型：$(operation_type_label "$mode")"
+  migration_log INFO "源站域名：$source_domain"
+  migration_log INFO "目标域名：$target_domain"
 }
 
 migration_log() {
@@ -174,19 +217,26 @@ migration_progress_end() {
 }
 
 show_recent_migration_log() {
-  local file latest='' modified latest_modified=''
+  local file latest='' modified latest_modified='' log_dir
+  local log_dirs=("$MIGRATION_LOG_DIR")
   need_cmd find stat cat
-  if [[ ! -d "$MIGRATION_LOG_DIR" ]]; then
+  if [[ "$MIGRATION_LEGACY_LOG_DIR" != "$MIGRATION_LOG_DIR" && -d "$MIGRATION_LEGACY_LOG_DIR" ]]; then
+    log_dirs+=("$MIGRATION_LEGACY_LOG_DIR")
+  fi
+  if [[ ! -d "$MIGRATION_LOG_DIR" && ! -d "$MIGRATION_LEGACY_LOG_DIR" ]]; then
     warn '尚无操作日志。'
     return 0
   fi
-  while IFS= read -r -d '' file; do
-    modified="$(stat -c '%y' "$file")" || continue
-    if [[ -z "$latest_modified" || "$modified" > "$latest_modified" ]]; then
-      latest="$file"
-      latest_modified="$modified"
-    fi
-  done < <(find "$MIGRATION_LOG_DIR" -maxdepth 1 -type f -name 'migration_*.log' -print0 2>/dev/null)
+  for log_dir in "${log_dirs[@]}"; do
+    [[ -d "$log_dir" ]] || continue
+    while IFS= read -r -d '' file; do
+      modified="$(stat -c '%y' "$file")" || continue
+      if [[ -z "$latest_modified" || "$modified" > "$latest_modified" ]]; then
+        latest="$file"
+        latest_modified="$modified"
+      fi
+    done < <(find "$log_dir" -maxdepth 1 -type f -name '*.log' -print0 2>/dev/null)
+  done
   if [[ -z "$latest" ]]; then
     warn '尚无操作日志。'
     return 0
@@ -346,6 +396,7 @@ EOF
   printf '%s站点目录：%s%s%s\n' "$NUMBER" "$LIGHT_GREEN" "$SITE_ROOT" "$RESET"
   printf '%s备份目录：%s%s%s\n' "$NUMBER" "$LIGHT_GREEN" "$BACKUP_DIR" "$RESET"
   printf '%s快照目录：%s%s%s  -  %s备注：%ssnapshot%s\n' "$NUMBER" "$LIGHT_GREEN" "$BACKUP_DIR" "$RESET" "$NUMBER" "$LIGHT_GREEN" "$RESET"
+  printf '%s日志目录：%s%s%s\n' "$NUMBER" "$LIGHT_GREEN" "$MIGRATION_LOG_DIR" "$RESET"
   printf '%sGitHub：%s%s%s%s%s%s\n\n' "$NUMBER" "$BLUE" "$NO_UNDERLINE" "$LINK_OPEN" "$PROJECT_URL" "$LINK_CLOSE" "$RESET"
 }
 
@@ -2350,6 +2401,12 @@ migration_preflight() (
       ;;
   esac
 
+  migration_log_finalize_name "$mode" "$MIGRATION_SOURCE_DOMAIN" "$target_domain" || {
+    err '无法整理迁移日志文件名。'
+    migration_log ERROR '无法将迁移日志重命名为包含源域名和目标域名的名称。'
+    return 1
+  }
+
   target_scheme="$(detect_target_scheme "$target_domain")" || { migration_log ERROR '目标 Nginx 协议检查失败。'; return 1; }
   target_url="${target_scheme}://${target_domain}"
   target_owner="$(stat -c '%u:%g' "$target_wp_root")" || { err '无法读取目标 WordPress Root 属主。'; migration_log ERROR '目标属主检查失败。'; return 1; }
@@ -2516,7 +2573,7 @@ $APP_NAME v$VERSION
   SITEBAK_BACKUP_DIR     默认 /home
   SITEBAK_UPDATE_URL     默认 GitHub raw 地址
   SITEBAK_DB_CONTAINER   可选，指定数据库容器名称
-  SITEBAK_MIGRATION_LOG_DIR  默认 /var/log/sitebak
+  SITEBAK_MIGRATION_LOG_DIR  默认 /home/sitebak-logs
   SITEBAK_MIGRATION_TMP_ROOT 默认 /tmp
   NO_COLOR              设置后关闭彩色输出
 EOF
