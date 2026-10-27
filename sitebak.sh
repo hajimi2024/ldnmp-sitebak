@@ -2,7 +2,7 @@
 
 set -Eeuo pipefail
 
-VERSION="0.4.2"
+VERSION="0.4.3"
 APP_NAME="LDNMP 单站备份恢复工具"
 
 WEB_ROOT="${SITEBAK_WEB_ROOT:-/home/web}"
@@ -309,8 +309,8 @@ render_snapshot_menu() {
 render_migration_menu() {
   printf '%s站点导入%s\n' "$BOLD" "$RESET"
   menu_separator
-  menu_item '1.  导入并更换域名'; printf '\n'
-  menu_item '2.  导入并保留域名'; printf '\n'
+  menu_pair '1.  导入并更换域名' '2.  导入并保留域名' 18
+  menu_row_gap
   menu_item '3.  查看最近一次操作日志'; printf '\n'
   render_return_section
 }

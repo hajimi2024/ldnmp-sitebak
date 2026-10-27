@@ -86,12 +86,13 @@ main = read_plain('main-wide').splitlines()
 assert main.count('-' * 24) == 3, main
 assert main[-4:] == ['8.  站点导入 ♻️', '-' * 24, '0.  退出', '-' * 24], main
 
+assert_layout('migration-wide', [
+    ('1.  导入并更换域名', '2.  导入并保留域名'),
+], separator_count=3)
 migration = read_plain('migration-wide').splitlines()
-assert migration == [
-    '站点导入', '-' * 24,
-    '1.  导入并更换域名', '2.  导入并保留域名', '3.  查看最近一次操作日志',
-    '-' * 24, '0.  返回上一级', '-' * 24,
-], migration
+third_index = migration.index('3.  查看最近一次操作日志')
+assert migration[third_index - 1] == '', migration
+assert migration[third_index + 1:third_index + 4] == ['-' * 24, '0.  返回上一级', '-' * 24], migration
 
 narrow = read_plain('main-narrow')
 assert '1.  列出 WordPress 站点\n2.  备份单个站点' in narrow
