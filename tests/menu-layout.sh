@@ -91,7 +91,7 @@ assert_layout('snapshots-wide', [
 main = read_plain('main-wide').splitlines()
 assert main.count('-' * 24) == 3, main
 operation_index = main.index('操作')
-assert main[operation_index:operation_index + 4] == ['操作', '', '-' * 51, ''], main
+assert main[operation_index:operation_index + 3] == ['操作', '-' * 51, '1.  列出 WordPress 站点                 2.  备份单个站点'], main
 site_import_index = main.index('8.  站点导入 ♻️')
 assert main[site_import_index - 1:site_import_index + 2] == ['-' * 24, '8.  站点导入 ♻️', '-' * 24], main
 assert main[-3:] == ['-' * 24, '0.  退出', '-' * 24], main
@@ -108,7 +108,7 @@ narrow = read_plain('main-narrow')
 assert '1.  列出 WordPress 站点\n2.  备份单个站点' in narrow
 assert '2.  备份单个站点\n\n3.  查看备份文件' in narrow
 assert '7.  更新脚本\n' in narrow
-assert ('操作\n\n' + '-' * 51 + '\n\n1.  列出 WordPress 站点' in narrow), narrow
+assert ('操作\n' + '-' * 51 + '\n1.  列出 WordPress 站点' in narrow), narrow
 assert ('7.  更新脚本\n\n' + '-' * 24 + '\n8.  站点导入 ♻️\n' +
         '-' * 24 + '\n0.  退出') in narrow
 assert '                 2.  备份单个站点' not in narrow
