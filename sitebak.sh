@@ -2,7 +2,7 @@
 
 set -Eeuo pipefail
 
-VERSION="0.4.8"
+VERSION="0.4.9"
 APP_NAME="LDNMP 单站备份恢复工具"
 
 WEB_ROOT="${SITEBAK_WEB_ROOT:-/home/web}"
@@ -931,7 +931,7 @@ list_backups_for_domain() {
 
 select_backup() {
   local domain="${1:-}"
-  local filter="${2:-backup}" action="${3:-恢复}" choice number title
+  local filter="${2:-backup}" action="${3:-恢复}" intro="${4:-}" choice number title
   case "$filter" in
     backup) title='普通备份' ;;
     snapshot|snapshots) title='快照' ;;
@@ -942,6 +942,10 @@ select_backup() {
 
   while true; do
     header >&2
+    if [[ -n "$intro" ]]; then
+      printf '%s%s%s\n' "$BOLD" "$intro" "$RESET" >&2
+      menu_separator >&2
+    fi
     if [[ -n "$domain" ]]; then
       printf '%s%s 可用%s：%s\n' "$BOLD" "$domain" "$title" "$RESET" >&2
     else
@@ -2263,10 +2267,11 @@ snapshots_menu() {
 migration_preflight() (
   umask 077
   local mode="$1" archive target_domain target_dir target_wp_config target_wp_root target_scheme target_url target_sql
-  local tmp='' status=0 target_owner locked_identity archive_sha256 database_imported=no files_replaced=no
+  local tmp='' status=0 target_owner locked_identity archive_sha256 database_imported=no files_replaced=no backup_intro=''
   local target_db_user target_db_password target_db_host
   case "$mode" in
-    change-domain|keep-domain) ;;
+    change-domain) ;;
+    keep-domain) backup_intro='适用于跨服务器导入并保留域名' ;;
     *) err '未知迁移模式。'; return 1 ;;
   esac
 
@@ -2285,7 +2290,7 @@ migration_preflight() (
 
   migration_log INFO '开始站点导入：先执行安全预检和暂存，确认后才写入目标数据库和 WordPress Root。'
   need_cmd tar gzip awk sed grep find cut realpath readlink dirname stat cp mv chmod mktemp hostname sha256sum sort id chown
-  archive="$(select_backup '' backup 迁移)" || {
+  archive="$(select_backup '' backup 迁移 "$backup_intro")" || {
     migration_log INFO '用户取消了备份选择。'
     return 0
   }

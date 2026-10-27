@@ -201,6 +201,7 @@ if ! migration_preflight keep-domain < <(printf '%s\n' 1 1 same.example yes) > "
   exit 1
 fi
 grep -Fq '操作类型：导入并保留域名' "$fixture/keep-output"
+grep -Fq '适用于跨服务器导入并保留域名' "$fixture/keep-output"
 [[ $(< "$fixture/finalize-call") == 'keep-domain|same.example|same.example|http://same.example' ]]
 [[ $(< "$SITE_ROOT/same.example/index.php") == source:same.example ]]
 [[ $(parse_migration_wp_define "$SITE_ROOT/same.example/wp-config.php" DB_NAME) == same_target_db ]]
