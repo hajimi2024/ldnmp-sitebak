@@ -51,10 +51,10 @@ curl() {
 : > "$fixture/curl-args"
 run_menu_action update_self < <(printf '0\n') >> "$fixture/output" 2>&1
 [[ -x "$INSTALL_PATH" ]]
-grep -q '^VERSION="0.6.0"$' "$INSTALL_PATH"
+grep -q '^VERSION="0.6.1"$' "$INSTALL_PATH"
 grep -Eq 'commits/main\?sitebak_nocache=[0-9]+' "$fixture/curl-args"
 grep -q 'raw.githubusercontent.com/hajimi2024/ldnmp-sitebak/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/sitebak.sh' "$fixture/curl-args"
-grep -q '版本 0.6.0' "$fixture/output"
+grep -q '版本 0.6.1' "$fixture/output"
 
 exec() { printf '%s\n' "$1" > "$fixture/reloaded"; }
 update_and_reload > "$fixture/reload-output" 2>&1

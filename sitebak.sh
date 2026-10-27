@@ -2,7 +2,7 @@
 
 set -Eeuo pipefail
 
-VERSION="0.6.0"
+VERSION="0.6.1"
 APP_NAME="LDNMP 单站备份恢复工具"
 
 WEB_ROOT="${SITEBAK_WEB_ROOT:-/home/web}"
@@ -44,6 +44,7 @@ RED=$'\033[0;31m'
 GREEN=$'\033[0;32m'
 LIGHT_GREEN=$'\033[0;92m'
 YELLOW=$'\033[0;33m'
+PURPLE=$'\033[1;35m'
 BLUE=$'\033[0;96m'
 CYAN=$'\033[0;36m'
 GRAY=$'\033[0;90m'
@@ -54,7 +55,7 @@ NO_UNDERLINE=$'\033[24m'
 LINK_OPEN=''
 LINK_CLOSE=''
 if [[ ${TERM:-} == dumb || -n ${NO_COLOR+x} ]] || [[ ! -t 1 && ! -t 2 ]]; then
-  RED='' GREEN='' LIGHT_GREEN='' YELLOW='' BLUE='' CYAN='' GRAY='' NUMBER='' BOLD='' RESET='' NO_UNDERLINE=''
+  RED='' GREEN='' LIGHT_GREEN='' YELLOW='' PURPLE='' BLUE='' CYAN='' GRAY='' NUMBER='' BOLD='' RESET='' NO_UNDERLINE=''
 else
   LINK_OPEN=$'\033]8;;'"$PROJECT_URL"$'\033\\'
   LINK_CLOSE=$'\033]8;;\033\\'
@@ -397,6 +398,7 @@ EOF
   printf '%s备份目录：%s%s%s\n' "$NUMBER" "$LIGHT_GREEN" "$BACKUP_DIR" "$RESET"
   printf '%s快照目录：%s%s%s  -  %s备注：%ssnapshot%s\n' "$NUMBER" "$LIGHT_GREEN" "$BACKUP_DIR" "$RESET" "$NUMBER" "$LIGHT_GREEN" "$RESET"
   printf '%s日志目录：%s%s%s\n' "$NUMBER" "$LIGHT_GREEN" "$MIGRATION_LOG_DIR" "$RESET"
+  printf '%s当前服务器：%s%s%s\n' "$NUMBER" "$PURPLE" "$(get_current_server_label)" "$RESET"
   printf '%sGitHub：%s%s%s%s%s%s\n\n' "$NUMBER" "$BLUE" "$NO_UNDERLINE" "$LINK_OPEN" "$PROJECT_URL" "$LINK_CLOSE" "$RESET"
 }
 
@@ -1481,6 +1483,18 @@ get_target_server_display() {
   [[ "$memory_kb" =~ ^[1-9][0-9]*$ ]] || { err '无法读取目标服务器内存容量。'; return 1; }
   memory_gb=$(((memory_kb + 1048575) / 1048576))
   printf '%s（%sC / %sG）' "$host" "$cores" "$memory_gb"
+}
+
+get_current_server_label() {
+  local host cores memory_kb memory_gb
+  host="$(hostname 2>/dev/null || true)"
+  [[ -n "$host" ]] || { err '无法读取当前服务器主机名。'; return 1; }
+  cores="$(getconf _NPROCESSORS_ONLN 2>/dev/null || nproc 2>/dev/null || true)"
+  [[ "$cores" =~ ^[1-9][0-9]*$ ]] || { err '无法读取当前服务器 CPU 核数。'; return 1; }
+  memory_kb="$(awk '/^MemTotal:[[:space:]]+/ { print $2; exit }' /proc/meminfo 2>/dev/null || true)"
+  [[ "$memory_kb" =~ ^[1-9][0-9]*$ ]] || { err '无法读取当前服务器内存容量。'; return 1; }
+  memory_gb=$(((memory_kb + 1048575) / 1048576))
+  printf '@%s %sc%sg' "$host" "$cores" "$memory_gb"
 }
 
 nginx_target_config_fingerprint() {
