@@ -9,6 +9,8 @@ fixture_stamp=20261026_130000
 db_tables_file=''
 import_status=0
 finalize_status=0
+wpcli_status=0
+wpcli_preflight_done=no
 fixture_server_identity='target-vps / machine:0123456789abcdef'
 
 clear_screen() { :; }
@@ -27,11 +29,15 @@ prepare_db_client() {
 get_target_server_identity() { printf '%s' "$fixture_server_identity"; }
 get_target_server_username() { printf '%s' fixture-user; }
 get_target_server_display() { printf '%s' 'target-vps（2C / 4G）'; }
-prepare_wp_cli_environment() { migration_log INFO 'MOCK WP-CLI 环境检查通过。'; }
+prepare_wp_cli_environment() {
+  ((wpcli_status == 0)) || return "$wpcli_status"
+  wpcli_preflight_done=yes
+  migration_log INFO 'MOCK WP-CLI 环境检查通过。'
+}
 finalize_wordpress_migration() {
   printf '%s|%s|%s|%s\n' "$1" "$2" "$3" "$4" > "$fixture/finalize-call"
   ((finalize_status == 0)) || return "$finalize_status"
-  migration_log INFO "MOCK 阶段四收尾：$1 / $2 / $3"
+  migration_log INFO "MOCK WordPress 收尾：$1 / $2 / $3"
 }
 run_mysqldump() { printf '%s\n' 'CREATE TABLE `source_options` (`option_id` bigint);'; }
 run_mysql() {
@@ -40,6 +46,7 @@ run_mysql() {
   elif [[ " $* " == *' SELECT 1 '* || " $* " == *' -e '* ]]; then
     :
   elif [[ "${1:-}" == "$DB_NAME" ]]; then
+    [[ "$wpcli_preflight_done" == yes ]] || return 92
     ((import_status == 0)) || return "$import_status"
     cat > "$fixture/imported.sql"
     printf 'source_options\n' > "$db_tables_file"
@@ -55,6 +62,20 @@ expect_failure() {
   status=$?
   set -e
   [[ $status -ne 0 ]]
+}
+
+assert_progress_output() {
+  local file="$1" expect_complete="$2" values=() i
+  mapfile -t values < <(grep -oE '[[:space:]][0-9]{1,3}%' "$file" | tr -d ' %')
+  ((${#values[@]} > 0))
+  for ((i = 1; i < ${#values[@]}; i++)); do
+    ((values[i] >= values[i - 1]))
+  done
+  if [[ "$expect_complete" == yes ]]; then
+    [[ "${values[-1]}" == 100 ]]
+  else
+    [[ ! " ${values[*]} " =~ [[:space:]]100[[:space:]] ]]
+  fi
 }
 
 write_wp_config() {
@@ -80,6 +101,8 @@ start_case() {
   db_tables_file="$fixture/$name/db-tables"
   import_status=0
   finalize_status=0
+  wpcli_status=0
+  wpcli_preflight_done=no
   fixture_server_identity='target-vps / machine:0123456789abcdef'
   rm -f -- "$fixture/imported.sql"
   rm -f -- "$fixture/finalize-call"
@@ -130,6 +153,7 @@ if ! migration_preflight change-domain < <(printf '%s\n' 1 1 yes) > "$fixture/ch
   exit 1
 fi
 grep -Fq '站点导入及收尾完成' "$fixture/change-output"
+assert_progress_output "$fixture/change-output" yes
 [[ $(< "$fixture/finalize-call") == 'change-domain|old.example|new.example|http://new.example' ]]
 grep -Fq '正在检查备份包' "$fixture/change-output"
 grep -Fq '正在导入目标数据库：target_db' "$fixture/change-output"
@@ -221,8 +245,23 @@ import_status=7
 cp -a "$SITE_ROOT/new.example" "$fixture/import-failure-before"
 expect_failure migration_preflight change-domain < <(printf '%s\n' 1 1 yes)
 grep -Fq '数据库导入失败' "$fixture/failure-output"
+assert_progress_output "$fixture/failure-output" no
 diff -r "$fixture/import-failure-before" "$SITE_ROOT/new.example"
 [[ -z "$(find "$MIGRATION_TMP_ROOT" -mindepth 1 -print -quit)" ]]
+
+# WP-CLI 容器预检失败必须发生在数据库导入和文件替换之前。
+start_case wpcli-preflight-failure
+create_source_backup old.example direct source_db
+create_target_site new.example nested target_db
+write_target_nginx new.example
+wpcli_status=8
+cp -a "$SITE_ROOT/new.example" "$fixture/wpcli-before"
+expect_failure migration_preflight change-domain < <(printf '%s\n' 1 1)
+wpcli_log="$(find "$MIGRATION_LOG_DIR" -type f -name 'migration_change-domain_*.log' -print -quit)"
+grep -Fq 'WP-CLI 环境检查失败，尚未写入目标站点' "$wpcli_log"
+diff -r "$fixture/wpcli-before" "$SITE_ROOT/new.example"
+[[ ! -e "$fixture/imported.sql" ]]
+assert_progress_output "$fixture/failure-output" no
 
 # 收尾失败不能报导入成功，已写入状态必须明确并清理临时目录。
 start_case finalize-failure
@@ -234,6 +273,7 @@ expect_failure migration_preflight change-domain < <(printf '%s\n' 1 1 yes)
 [[ $(< "$fixture/finalize-call") == 'change-domain|old.example|new.example|http://new.example' ]]
 grep -Fq '目标站点可能已部分写入；请重新准备空白目标站点后从头导入' "$fixture/failure-output"
 ! grep -Fq '站点导入及收尾完成' "$fixture/failure-output"
+assert_progress_output "$fixture/failure-output" no
 [[ -f "$fixture/imported.sql" ]]
 [[ -z "$(find "$MIGRATION_TMP_ROOT" -mindepth 1 -print -quit)" ]]
 

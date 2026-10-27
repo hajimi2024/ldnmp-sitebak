@@ -88,7 +88,7 @@ finalize_wordpress_migration change-domain old.example new.example https://new.e
 status=$?
 set -e
 [[ $status -ne 0 ]]
-! grep -Fq '阶段四收尾完成' "$fixture/wp-failure"
+! grep -Fq 'WordPress 收尾完成' "$fixture/wp-failure"
 wp_fail_pattern=''
 
 # 与 WP Box 共用固定镜像、网络及一次性容器；模拟首次拉取和缓存复用。
@@ -117,8 +117,9 @@ docker() {
       [[ "$docker_fail" != run ]] || return 1
       case " $* " in
         *' --entrypoint php '*) [[ "$docker_fail" != db ]] ;;
-        *' cli version '*) printf 'WP-CLI 2.12.0\n' ;;
-        *' --info '*) printf 'PHP version:\t8.3.0\n' ;;
+        *" $WPCLI_IMAGE wp cli version "*) printf 'WP-CLI 2.12.0\n' ;;
+        *" $WPCLI_IMAGE wp --info "*) printf 'PHP version:\t8.3.0\n' ;;
+        *" $WPCLI_IMAGE cli "*|*" $WPCLI_IMAGE --info "*) return 127 ;;
         *) : ;;
       esac
       ;;
@@ -142,6 +143,9 @@ grep -Fq -- '--security-opt no-new-privileges' "$docker_calls"
 grep -Fq -- '--read-only' "$docker_calls"
 grep -Fq -- '--tmpfs /tmp:rw,noexec,nosuid,size=64m' "$docker_calls"
 grep -Fq -- '--entrypoint php' "$docker_calls"
+grep -Fq -- "$WPCLI_IMAGE wp cli version" "$docker_calls"
+grep -Fq -- "$WPCLI_IMAGE wp --info" "$docker_calls"
+! grep -Fq -- "$WPCLI_IMAGE cli version" "$docker_calls"
 grep -Fq -- '--mount type=bind,source=' "$docker_calls"
 grep -Fq -- ',target=/var/www/html' "$docker_calls"
 ! grep -Eq ' exec | cp |curl|phar' "$docker_calls"
@@ -152,7 +156,9 @@ prepare_wp_cli_environment "$root" > "$fixture/reuse-output"
 grep -Fq '已缓存' "$fixture/reuse-output"
 ! grep -Fq ' pull ' "$docker_calls"
 run_wp_cli core is-installed
-grep -Fq -- '--path=/var/www/html' "$docker_calls"
+run_wp_cli elementor flush_css --regenerate
+grep -Fq -- "$WPCLI_IMAGE wp --path=/var/www/html core is-installed" "$docker_calls"
+grep -Fq -- "$WPCLI_IMAGE wp --path=/var/www/html elementor flush_css --regenerate" "$docker_calls"
 [[ "$image_cached" == yes ]]
 
 # 拉取失败、容器启动失败、数据库连接失败均在写入前中止。

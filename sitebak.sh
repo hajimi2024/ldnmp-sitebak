@@ -2,7 +2,7 @@
 
 set -Eeuo pipefail
 
-VERSION="0.4.0"
+VERSION="0.4.1"
 APP_NAME="LDNMP 单站备份恢复工具"
 
 WEB_ROOT="${SITEBAK_WEB_ROOT:-/home/web}"
@@ -19,6 +19,9 @@ WPCLI_NETWORK='web_default'
 WPCLI_WORKDIR='/var/www/html'
 WPCLI_TARGET_ROOT=''
 WPCLI_RUN_USER=''
+MIGRATION_PROGRESS_ACTIVE=no
+MIGRATION_PROGRESS_PERCENT=0
+MIGRATION_PROGRESS_LINE_OPEN=no
 
 NGINX_CONF_DIRS=(
   "$WEB_ROOT/conf.d"
@@ -39,6 +42,7 @@ LIGHT_GREEN=$'\033[0;92m'
 YELLOW=$'\033[0;33m'
 BLUE=$'\033[0;96m'
 CYAN=$'\033[0;36m'
+GRAY=$'\033[0;90m'
 NUMBER=$'\033[1;33m'
 BOLD=$'\033[1;96m'
 RESET=$'\033[0m'
@@ -46,16 +50,26 @@ NO_UNDERLINE=$'\033[24m'
 LINK_OPEN=''
 LINK_CLOSE=''
 if [[ ${TERM:-} == dumb || -n ${NO_COLOR+x} ]] || [[ ! -t 1 && ! -t 2 ]]; then
-  RED='' GREEN='' LIGHT_GREEN='' YELLOW='' BLUE='' CYAN='' NUMBER='' BOLD='' RESET='' NO_UNDERLINE=''
+  RED='' GREEN='' LIGHT_GREEN='' YELLOW='' BLUE='' CYAN='' GRAY='' NUMBER='' BOLD='' RESET='' NO_UNDERLINE=''
 else
   LINK_OPEN=$'\033]8;;'"$PROJECT_URL"$'\033\\'
   LINK_CLOSE=$'\033]8;;\033\\'
 fi
 
-info() { printf '%s[INFO] %s%s\n' "$BLUE" "$*" "$RESET"; }
-ok() { printf '%s[OK] %s%s\n' "$GREEN" "$*" "$RESET"; }
-warn() { printf '%s[WARN] %s%s\n' "$YELLOW" "$*" "$RESET"; }
-err() { printf '%s[ERROR] %s%s\n' "$RED" "$*" "$RESET" >&2; }
+migration_progress_break_line() {
+  if [[ "$MIGRATION_PROGRESS_LINE_OPEN" == yes ]]; then
+    printf '\n'
+    MIGRATION_PROGRESS_LINE_OPEN=no
+  fi
+}
+
+info() { migration_progress_break_line; printf '%s[INFO] %s%s\n' "$BLUE" "$*" "$RESET"; }
+ok() { migration_progress_break_line; printf '%s[OK] %s%s\n' "$GREEN" "$*" "$RESET"; }
+warn() { migration_progress_break_line; printf '%s[WARN] %s%s\n' "$YELLOW" "$*" "$RESET"; }
+err() {
+  migration_progress_break_line
+  printf '%s[ERROR] %s%s\n' "$RED" "$*" "$RESET" >&2
+}
 ui_prompt() { printf '%s%s%s' "$BOLD" "$1" "$NUMBER"; }
 
 sanitize_migration_log_text() {
@@ -97,11 +111,64 @@ migration_log_finish() {
   migration_log INFO "迁移任务结束；退出状态=$status"
 }
 
+# 交互终端原地刷新；非交互输出保留可读的逐节点记录。
+migration_progress_render() {
+  local percent="$1" message="$2" columns bar_width completed pending done_part pending_part
+  columns="$(terminal_columns)"
+  bar_width=$((columns - 34))
+  ((bar_width < 12)) && bar_width=12
+  ((bar_width > 40)) && bar_width=40
+  completed=$((percent * bar_width / 100))
+  pending=$((bar_width - completed))
+  printf -v done_part '%*s' "$completed" ''
+  printf -v pending_part '%*s' "$pending" ''
+  done_part="${done_part// />}"
+  pending_part="${pending_part// /.}"
+  if [[ -t 1 && ${TERM:-} != dumb ]]; then
+    printf '\r\033[2K[%s%s%s%s%s] %3d%% %s' "$GREEN" "$done_part" "$GRAY" "$pending_part" "$RESET" "$percent" "$message"
+    MIGRATION_PROGRESS_LINE_OPEN=yes
+  else
+    printf '[%s%s] %3d%% %s\n' "$done_part" "$pending_part" "$percent" "$message"
+  fi
+}
+
+migration_progress_begin() {
+  MIGRATION_PROGRESS_ACTIVE=yes
+  MIGRATION_PROGRESS_PERCENT=0
+  migration_progress_render 0 "$1"
+  [[ -z "$MIGRATION_LOG_FILE" ]] || migration_log INFO "进度=0%；$1"
+}
+
 # 同时写入终端和本次操作日志的无敏感信息进度提示。
 migration_progress() {
   local message="$1"
-  info "$message"
-  [[ -z "$MIGRATION_LOG_FILE" ]] || migration_log INFO "$message"
+  if [[ "$MIGRATION_PROGRESS_ACTIVE" == yes ]]; then
+    migration_progress_render "$MIGRATION_PROGRESS_PERCENT" "$message"
+    [[ -z "$MIGRATION_LOG_FILE" ]] || migration_log INFO "进度=${MIGRATION_PROGRESS_PERCENT}%；$message"
+  else
+    info "$message"
+    [[ -z "$MIGRATION_LOG_FILE" ]] || migration_log INFO "$message"
+  fi
+}
+
+migration_progress_set() {
+  local percent="$1" message="$2"
+  [[ "$percent" =~ ^[0-9]{1,3}$ ]] || return 1
+  if [[ "$MIGRATION_PROGRESS_ACTIVE" != yes ]]; then
+    migration_progress "$message"
+    return 0
+  fi
+  ((percent >= MIGRATION_PROGRESS_PERCENT && percent <= 100)) || return 1
+  MIGRATION_PROGRESS_PERCENT="$percent"
+  migration_progress "$message"
+}
+
+migration_progress_end() {
+  if [[ "$MIGRATION_PROGRESS_LINE_OPEN" == yes ]]; then
+    printf '\n'
+  fi
+  MIGRATION_PROGRESS_LINE_OPEN=no
+  MIGRATION_PROGRESS_ACTIVE=no
 }
 
 show_recent_migration_log() {
@@ -1043,7 +1110,7 @@ inspect_migration_archive() {
 
   migration_progress '正在检查并解压外层备份包，大文件可能需要数分钟，请耐心等待。'
   extract_safe_tar "$archive" "$package_dir" '外层备份包' no || return 1
-  migration_progress '外层备份包检查和解压完成。'
+  migration_progress_set 20 '外层备份包检查和解压完成。'
   manifest="$package_dir/manifest.json"
   [[ -f "$manifest" ]] || { err '备份包缺少 manifest.json。'; return 1; }
   [[ -f "$package_dir/files/site-files.tar.gz" ]] || { err '备份包缺少站点文件。'; return 1; }
@@ -1083,9 +1150,9 @@ inspect_migration_archive() {
     [[ ! -f "$payload" ]] || tar -tzf "$payload" >/dev/null || { err "备份中的 $component 载荷无法读取。"; return 1; }
   done
 
-  migration_progress '正在检查并解压站点文件包，请耐心等待。'
+  migration_progress '正在解压并检查站点文件，请耐心等待。'
   extract_safe_tar "$package_dir/files/site-files.tar.gz" "$source_site_dir" '站点文件包' yes || return 1
-  migration_progress '站点文件包检查和解压完成。'
+  migration_progress_set 35 '站点文件解压和检查完成。'
   wp_config="$(find_wp_config "$source_site_dir")" || { err '备份包中无法唯一确定 WordPress Root。'; return 1; }
   validate_migration_wp_config "$wp_config" '源站 WordPress 配置' || return 1
   source_db_name="$(parse_migration_wp_define "$wp_config" DB_NAME)"
@@ -1486,7 +1553,7 @@ wp_cli_docker() {
     -e HOME=/tmp \
     --mount "type=bind,source=${target_root},target=${WPCLI_WORKDIR}" \
     --workdir "$WPCLI_WORKDIR" \
-    "$WPCLI_IMAGE" "$@"
+    "$WPCLI_IMAGE" wp "$@"
 }
 
 wp_cli_database_probe() {
@@ -1644,6 +1711,7 @@ finalize_wordpress_migration() {
   old_siteurl="$(run_wp_cli --skip-plugins --skip-themes option get siteurl)" || return 1
   home_host="$(wp_url_host "$old_home")"
   siteurl_host="$(wp_url_host "$old_siteurl")"
+  migration_progress_set 87 'WordPress 与数据库连接检查完成。'
 
   if [[ "$mode" == change-domain ]]; then
     [[ "$home_host" == "$source_domain" || "$home_host" == "$target_domain" ]] &&
@@ -1672,17 +1740,20 @@ finalize_wordpress_migration() {
     }
     migration_log INFO '保留域名模式：跳过全库域名替换。'
   fi
+  migration_progress_set 91 '域名处理和网址检查完成。'
 
   revalidate_migration_target_scope "$target_domain" "$locked_identity" "$prefix" || return 1
   run_wp_cli --skip-plugins --skip-themes option update home "$target_url" >/dev/null || return 1
   run_wp_cli --skip-plugins --skip-themes option update siteurl "$target_url" >/dev/null || return 1
   migration_progress '正在处理 Elementor。'
   elementor_finalize "$mode" "$source_domain" "$target_url" || return 1
+  migration_progress_set 94 'Elementor 检查和修复完成。'
 
   revalidate_migration_target_scope "$target_domain" "$locked_identity" "$prefix" || return 1
   migration_progress '正在刷新固定链接与站点瞬态缓存。'
   run_wp_cli --skip-plugins --skip-themes rewrite flush >/dev/null || return 1
   run_wp_cli --skip-plugins --skip-themes transient delete --all >/dev/null || return 1
+  migration_progress_set 96 '固定链接与站点瞬态缓存刷新完成。'
 
   migration_progress '正在检查站点配置。'
   current_home="$(run_wp_cli --skip-plugins --skip-themes option get home)" || return 1
@@ -1697,8 +1768,8 @@ finalize_wordpress_migration() {
   }
   run_wp_cli --skip-plugins --skip-themes core is-installed >/dev/null || return 1
   revalidate_migration_target_scope "$target_domain" "$locked_identity" "$prefix" || return 1
-  migration_log INFO "阶段四收尾完成；源域名=$source_domain；目标域名=$target_domain；目标网址=$target_url；数据库=$MIGRATION_TARGET_DB_NAME；表前缀=$prefix；GUID始终跳过"
-  migration_progress 'WordPress 配置与数据库状态检查完成。'
+  migration_log INFO "WordPress 收尾完成；源域名=$source_domain；目标域名=$target_domain；目标网址=$target_url；数据库=$MIGRATION_TARGET_DB_NAME；表前缀=$prefix；GUID始终跳过"
+  migration_progress_set 99 'WordPress 配置与数据库状态检查完成。'
   warn '请人工检查首页、后台、媒体库、文章页面和 Elementor 编辑器；历史日志或授权记录中的旧域名可能仍需人工核查。'
 }
 
@@ -2104,6 +2175,7 @@ migration_preflight() (
   trap '
     status=$?
     set +e
+    migration_progress_end
     if [[ -n "$tmp" && -d "$tmp" ]]; then
       rm -rf -- "$tmp"
       migration_log INFO "已清理本次迁移临时目录。"
@@ -2124,6 +2196,7 @@ migration_preflight() (
     migration_log INFO '用户取消了目标站点选择。'
     return 0
   }
+  migration_progress_begin '正在核对目标站点和数据库。'
   target_dir="$(site_path "$target_domain")"
   target_wp_config="$(find_wp_config "$target_dir")" || { err '无法唯一确定目标 WordPress Root。'; migration_log ERROR '目标 WordPress Root 不唯一。'; return 1; }
   validate_migration_target_scope "$target_domain" "$target_wp_config" || { migration_log ERROR '目标 WordPress Root 路径范围检查失败。'; return 1; }
@@ -2134,7 +2207,7 @@ migration_preflight() (
   target_db_host="$DB_HOST"
   migration_progress "正在检查目标数据库是否为空：$DB_NAME"
   verify_empty_target_database || { migration_log ERROR "目标数据库空库检查失败；目标数据库=$DB_NAME"; return 1; }
-  migration_progress "目标数据库空库检查完成：$DB_NAME"
+  migration_progress_set 10 "目标数据库空库检查完成：$DB_NAME"
 
   [[ -d "$MIGRATION_TMP_ROOT" ]] || { err "迁移临时目录根路径不存在：$MIGRATION_TMP_ROOT"; migration_log ERROR '迁移临时目录根路径不存在。'; return 1; }
   tmp="$(mktemp -d "$MIGRATION_TMP_ROOT/sitebak.migrate.XXXXXX")"
@@ -2146,7 +2219,7 @@ migration_preflight() (
     return 1
   fi
   archive_sha256="$(sha256sum "$archive" | awk '{print $1}')"
-  migration_progress "备份包检查完成：${archive##*/}"
+  migration_progress_set 40 "备份包检查完成：${archive##*/}"
   migration_log INFO "备份预检通过；源域名=$MIGRATION_SOURCE_DOMAIN；源数据库=$MIGRATION_SOURCE_DB；迁移表前缀=$MIGRATION_SOURCE_TABLE_PREFIX；备份指纹=$archive_sha256"
 
   case "$mode" in
@@ -2173,7 +2246,7 @@ migration_preflight() (
     migration_progress 'WordPress 文件暂存失败。'
     return 1
   }
-  migration_progress 'WordPress 文件暂存完成。'
+  migration_progress_set 50 'WordPress 文件暂存完成。'
   [[ "$(parse_migration_wp_define "$tmp/staged-wordpress/wp-config.php" DB_NAME)" == "$DB_NAME" ]] || {
     err '暂存 WordPress 配置未正确使用目标数据库。'
     migration_log ERROR '暂存配置目标数据库复核失败。'
@@ -2186,7 +2259,7 @@ migration_preflight() (
     migration_progress '待导入 SQL 安全检查失败。'
     return 1
   }
-  migration_progress '待导入 SQL 安全检查完成。'
+  migration_progress_set 55 '待导入 SQL 安全检查完成。'
   revalidate_migration_target_identity "$target_domain" "$locked_identity" "$MIGRATION_SOURCE_TABLE_PREFIX" || {
     migration_log ERROR '暂存完成后的目标身份重新验证失败。'
     return 1
@@ -2196,10 +2269,11 @@ migration_preflight() (
     migration_log ERROR 'WP-CLI 环境检查失败，尚未写入目标站点。'
     return 1
   }
-  migration_progress 'WP-CLI 环境检查完成。'
+  migration_progress_set 65 'WP-CLI 环境检查完成。'
 
   migration_log INFO "目标数据库连接与空库检查通过；目标数据库=$MIGRATION_TARGET_DB_NAME"
   migration_log INFO "目标预检通过；服务器=$MIGRATION_TARGET_SERVER；用户=$MIGRATION_TARGET_SERVER_USERNAME；目标域名=$target_domain；目标协议=$target_scheme；目标属主=$target_owner；数据库=$MIGRATION_TARGET_DB_NAME；目标身份=$locked_identity"
+  migration_progress_break_line
   confirm_target_operation "$mode" "$MIGRATION_SOURCE_DOMAIN" "$target_domain" "$target_url" "$MIGRATION_TARGET_SERVER" "$MIGRATION_TARGET_SERVER_USERNAME" "$target_wp_root" "$MIGRATION_TARGET_DB_NAME" "$archive" || {
     migration_log INFO '用户取消站点导入，未写入目标网站或数据库。'
     return 0
@@ -2217,7 +2291,7 @@ migration_preflight() (
     return 1
   fi
   database_imported=yes
-  migration_progress "目标数据库导入完成：$MIGRATION_TARGET_DB_NAME"
+  migration_progress_set 75 "目标数据库导入完成：$MIGRATION_TARGET_DB_NAME"
 
   [[ "$(sha256sum "$archive" | awk '{print $1}')" == "$archive_sha256" ]] || { err '文件写入前备份文件发生变化，已停止导入。'; migration_log ERROR '文件写入前备份指纹变化。'; return 1; }
   revalidate_migration_target_scope "$target_domain" "$locked_identity" "$MIGRATION_SOURCE_TABLE_PREFIX" || {
@@ -2241,11 +2315,11 @@ migration_preflight() (
     migration_log ERROR '导入后数据库连接或表前缀不一致。'
     return 1
   }
-  migration_progress "目标 WordPress Root 导入完成：$target_wp_root"
+  migration_progress_set 85 "目标 WordPress Root 导入完成：$target_wp_root"
   prepare_db_client mysql || { migration_log ERROR '导入后数据库客户端重新检查失败。'; return 1; }
   target_scheme="$(detect_target_scheme "$target_domain")" || return 1
   capture_migration_target_identity "$target_domain" "$target_wp_config" "$target_scheme" "$MIGRATION_SOURCE_TABLE_PREFIX" || {
-    migration_log ERROR '无法建立阶段四目标身份。'
+    migration_log ERROR '无法建立 WordPress 收尾目标身份。'
     return 1
   }
   locked_identity="$MIGRATION_TARGET_IDENTITY"
@@ -2254,7 +2328,8 @@ migration_preflight() (
     err 'WordPress 收尾失败，目标站点可能已部分写入；请重新准备空白目标站点后从头导入。'
     return 1
   }
-  header
+  migration_progress_set 100 '站点导入及 WordPress 收尾全部完成。'
+  migration_progress_end
   ok '站点导入及收尾完成。'
   info '本阶段未修改 Nginx、SSL，也未重启共享容器。'
   ok "操作日志已保存：$MIGRATION_LOG_FILE"
@@ -2322,7 +2397,6 @@ $APP_NAME v$VERSION
   SITEBAK_BACKUP_DIR     默认 /home
   SITEBAK_UPDATE_URL     默认 GitHub raw 地址
   SITEBAK_DB_CONTAINER   可选，指定数据库容器名称
-  SITEBAK_PHP_CONTAINER  默认 php，用于阶段四 WP-CLI
   SITEBAK_MIGRATION_LOG_DIR  默认 /var/log/sitebak
   SITEBAK_MIGRATION_TMP_ROOT 默认 /tmp
   NO_COLOR              设置后关闭彩色输出

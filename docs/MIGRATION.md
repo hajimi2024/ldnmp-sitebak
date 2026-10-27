@@ -4,7 +4,7 @@
 
 任何站点导入操作都必须严格限定在用户指定的目标网站。宁可拒绝导入，也不能污染同一台服务器或其他服务器上的正常网站。
 
-当前 v0.4.0 已形成一次性完整导入流程：安全导入文件和数据库后，使用与 WP Box 相同的固定摘要 WP-CLI 一次性 Docker 容器执行域名替换、Elementor 修复、固定链接和瞬态缓存刷新及最终校验。仍不修改 Nginx 和 SSL，也不重启共享容器。
+当前 v0.4.1 已形成一次性完整导入流程：安全导入文件和数据库后，使用与 WP Box 相同的固定摘要 WP-CLI 一次性 Docker 容器显式执行 `wp`，完成域名替换、Elementor 修复、固定链接和瞬态缓存刷新及最终校验。仍不修改 Nginx 和 SSL，也不重启共享容器。
 
 ## 目标身份
 
@@ -51,7 +51,9 @@
 
 发现配置变化、路径变化、数据库变化、服务器变化或身份指纹不一致时立即停止，不自动重试。
 
-数据库导入只能连接已确认的目标数据库，拒绝 `CREATE DATABASE`、`DROP DATABASE` 和 `USE` 语句，且不创建数据库。文件写入只能发生在经过验证的目标 WordPress Root 内，不能触及域名目录的其他文件，更不能触及其他站点、Nginx 或 SSL。WP-CLI 使用与 WP Box 相同的 `wordpress:cli-2.12.0-php8.3` 固定摘要镜像和 `web_default` 网络；在确认前检测或拉取并缓存镜像，验证容器启动及目标数据库只读连接。每次命令均使用 `docker run --rm`，只挂载已验证的目标 WordPress Root，并以该 Root 的非 root 属主运行；路径或属主无法安全验证时立即停止。
+数据库导入只能连接已确认的目标数据库，拒绝 `CREATE DATABASE`、`DROP DATABASE` 和 `USE` 语句，且不创建数据库。文件写入只能发生在经过验证的目标 WordPress Root 内，不能触及域名目录的其他文件，更不能触及其他站点、Nginx 或 SSL。WP-CLI 使用与 WP Box 相同的 `wordpress:cli-2.12.0-php8.3` 固定摘要镜像和 `web_default` 网络；在确认前检测或拉取并缓存镜像，验证容器启动及目标数据库只读连接。每次命令均使用 `docker run --rm`，只挂载已验证的目标 WordPress Root，以该 Root 的非 root 属主运行，并显式执行 `wp`；路径或属主无法安全验证时立即停止。
+
+总体进度采用预定义安全节点，只在对应节点真实完成后单调增加。两层归档解压分别计入完成节点；复制、数据库导入和 WP-CLI 等无法从现有工具稳定取得内部比例的步骤，在命令成功返回后更新，不按耗时推算。失败不会补齐进度，100% 仅代表文件、数据库、域名处理、Elementor、固定链接和最终配置检查全部成功。
 
 更换域名模式按 HTTPS、HTTP、协议相对 URL 和具有域名边界的裸域名顺序执行，每组替换均先 dry-run，再用相同参数正式执行；固定使用 `--all-tables-with-prefix --skip-columns=guid --precise`。保留域名模式不执行全库域名替换。Elementor 命令按实际安装、启用状态和命令帮助发现结果执行，加载范围限制为 Elementor/Elementor Pro，并使用已验证的下划线命令 `replace_urls` 和 `flush_css --regenerate`。
 
