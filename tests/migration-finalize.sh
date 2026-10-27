@@ -175,8 +175,6 @@ mock_owner=0:0
 if prepare_wp_cli_environment "$root" > "$fixture/root-owner-fail" 2>&1; then exit 1; fi
 grep -Fq '必须是非 root 用户' "$fixture/root-owner-fail"
 
-# 独立继续逻辑和旧安装方式已完全移除。
-! declare -F continue_migration_finalize >/dev/null
-! declare -F list_stage3_completion_records >/dev/null
+# 菜单测试负责锁定当前三个入口；本文件只验证完整导入中的收尾步骤。
 ! declare -F cleanup_wp_cli_environment >/dev/null
 printf 'PASS: URL, GUID, Elementor, WP Box image, cached pull and isolated container\n'

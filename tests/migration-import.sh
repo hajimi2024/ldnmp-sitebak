@@ -165,7 +165,7 @@ grep -Fq '创建、删除或切换数据库语句' "$fixture/failure-output"
 latest_log="$(find "$MIGRATION_LOG_DIR" -type f -name 'migration_change-domain_*.log' -print -quit)"
 grep -Fq '目标数据库导入完成：target_db' "$latest_log"
 grep -Fq '目标 WordPress Root 导入完成' "$latest_log"
-grep -Fq '数据库已导入=yes；文件已替换=yes' "$latest_log"
+grep -Fq '站点导入写入状态；数据库已导入=yes；文件已替换=yes' "$latest_log"
 
 # Keep-domain import permits different servers but requires the same source and target domain.
 start_case keep-success
@@ -256,4 +256,4 @@ diff -r "$fixture/identity-before" "$SITE_ROOT/new.example"
 [[ ! -e "$fixture/imported.sql" ]]
 [[ -z "$(find "$MIGRATION_TMP_ROOT" -mindepth 1 -print -quit)" ]]
 
-printf 'PASS: stage-three change/keep import, confirmation, identity, failure and cleanup safety\n'
+printf 'PASS: complete change/keep import, confirmation, identity, failure and cleanup safety\n'

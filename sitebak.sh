@@ -1648,7 +1648,7 @@ finalize_wordpress_migration() {
   if [[ "$mode" == change-domain ]]; then
     [[ "$home_host" == "$source_domain" || "$home_host" == "$target_domain" ]] &&
       [[ "$siteurl_host" == "$source_domain" || "$siteurl_host" == "$target_domain" ]] || {
-      err '数据库中的 home/siteurl 与阶段三源、目标域名均不一致，拒绝自动替换。'
+      err '数据库中的 home/siteurl 与本次导入的源、目标域名均不一致，拒绝自动替换。'
       return 1
     }
     [[ "$home_host" != "$target_domain" || "$old_home" == "$target_url" ]] &&
@@ -2108,7 +2108,7 @@ migration_preflight() (
       rm -rf -- "$tmp"
       migration_log INFO "已清理本次迁移临时目录。"
     fi
-    migration_log INFO "阶段三写入状态；数据库已导入=$database_imported；文件已替换=$files_replaced"
+    migration_log INFO "站点导入写入状态；数据库已导入=$database_imported；文件已替换=$files_replaced"
     migration_log_finish "$status"
   ' EXIT
 
