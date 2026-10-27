@@ -2,7 +2,7 @@
 
 set -Eeuo pipefail
 
-VERSION="0.6.6"
+VERSION="0.6.7"
 APP_NAME="LDNMP 单站备份恢复工具"
 
 WEB_ROOT="${SITEBAK_WEB_ROOT:-/home/web}"
@@ -338,6 +338,10 @@ menu_row_gap() {
   printf '\n'
 }
 
+menu_title() {
+  printf '%s    %s%s\n' "$BOLD" "$1" "$RESET"
+}
+
 render_return_section() {
   menu_separator
   menu_item '0.  返回上一级'; printf '\n'
@@ -345,7 +349,7 @@ render_return_section() {
 }
 
 render_main_menu() {
-  printf '%s操作%s\n' "$BOLD" "$RESET"
+  menu_title '操作'
   wide_separator
   menu_pair '1.  列出 WordPress 站点' '2.  备份单个站点' 23
   menu_row_gap
@@ -372,7 +376,7 @@ render_snapshot_menu() {
 }
 
 render_migration_menu() {
-  printf '%s站点导入%s\n' "$BOLD" "$RESET"
+  menu_title '站点导入'
   wide_separator
   menu_pair '1.  导入并更换域名' '2.  导入并保留域名' 18
   menu_row_gap

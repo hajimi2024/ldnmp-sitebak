@@ -90,8 +90,8 @@ assert_layout('snapshots-wide', [
 
 main = read_plain('main-wide').splitlines()
 assert main.count('-' * 24) == 3, main
-operation_index = main.index('操作')
-assert main[operation_index:operation_index + 3] == ['操作', '-' * 51, '1.  列出 WordPress 站点                 2.  备份单个站点'], main
+operation_index = main.index('    操作')
+assert main[operation_index:operation_index + 3] == ['    操作', '-' * 51, '1.  列出 WordPress 站点                 2.  备份单个站点'], main
 site_import_index = main.index('8.  站点导入 ♻️')
 assert main[site_import_index - 1:site_import_index + 2] == ['-' * 24, '8.  站点导入 ♻️', '-' * 24], main
 assert main[-3:] == ['-' * 24, '0.  退出', '-' * 24], main
@@ -100,7 +100,7 @@ assert_layout('migration-wide', [
     ('1.  导入并更换域名', '2.  导入并保留域名'),
 ], separator_count=2)
 migration = read_plain('migration-wide').splitlines()
-title_index = migration.index('站点导入')
+title_index = migration.index('    站点导入')
 assert migration[title_index + 1] == '-' * 51, migration
 third_index = migration.index('3.  查看最近一次操作日志')
 assert migration[third_index - 1] == '', migration

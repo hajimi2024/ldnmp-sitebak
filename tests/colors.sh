@@ -77,11 +77,13 @@ for number in range(9):
 for label in ['版本：', '备份目录：', '快照目录：', '日志目录：', '备注：']:
     assert '\x1b[1;33m' + label + '\x1b[0;92m' in colored
 assert '\x1b[1;33m当前服务器：\x1b[1;35m' in colored
-for value in ['0.6.6', fixture + '/backups', '/home/sitebak-logs', 'snapshot']:
+for value in ['0.6.7', fixture + '/backups', '/home/sitebak-logs', 'snapshot']:
     assert '\x1b[0;92m' + value + '\x1b[0m' in colored
 assert '\x1b[0;92m' + fixture + '/html' + '\x1b[0m' not in colored
 assert '\x1b[1;35m@' in colored
 assert '-' * 51 in plain
+assert '\x1b[1;96m    操作\x1b[0m' in colored
+assert '\x1b[1;96m    站点导入\x1b[0m' in colored
 project_url = 'https://github.com/hajimi2024/ldnmp-sitebak'
 assert '\x1b[1;33mGitHub：\x1b[0;96m' in colored
 assert ('\x1b[0;96m\x1b[24m\x1b]8;;' + project_url + '\x1b\\' + project_url
