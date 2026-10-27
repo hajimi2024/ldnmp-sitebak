@@ -71,6 +71,7 @@ err() {
   printf '%s[ERROR] %s%s\n' "$RED" "$*" "$RESET" >&2
 }
 ui_prompt() { printf '%s%s%s' "$BOLD" "$1" "$NUMBER"; }
+ui_confirm_prompt() { printf '%s%s%s' "$BOLD" "$1" "$GREEN"; }
 
 sanitize_migration_log_text() {
   sed -E \
@@ -1508,7 +1509,7 @@ confirm_target_operation() {
       ;;
   esac
   while true; do
-    ui_prompt '请输入 yes 确认：'
+    ui_confirm_prompt '请输入 yes 确认：'
     ui_read confirm || { warn '已取消操作。'; return 1; }
     case "$confirm" in
       yes) return 0 ;;
@@ -2017,7 +2018,7 @@ delete_backup_menu() {
   file="$(select_backup "" "${1:-backup}" 删除)" || return 0
   header
   warn "即将删除$(archive_label "$file")：$file"
-  ui_prompt '请输入 yes 确认删除：'
+  ui_confirm_prompt '请输入 yes 确认删除：'
   ui_read confirm || return 1
   if [[ "$confirm" == "yes" ]]; then
     rm -f "$file"
