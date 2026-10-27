@@ -2,7 +2,7 @@
 
 set -Eeuo pipefail
 
-VERSION="0.6.2"
+VERSION="0.6.3"
 APP_NAME="LDNMP 单站备份恢复工具"
 
 WEB_ROOT="${SITEBAK_WEB_ROOT:-/home/web}"
@@ -394,7 +394,6 @@ EOF
     printf 'LDNMP\n%s----------------\n单站备份恢复工具\n----------------%s\n' "$BOLD" "$RESET"
   fi
   printf '\n%s版本：%s%s%s\n' "$NUMBER" "$LIGHT_GREEN" "$VERSION" "$RESET"
-  printf '%s站点目录：%s%s%s\n' "$NUMBER" "$LIGHT_GREEN" "$SITE_ROOT" "$RESET"
   printf '%s备份目录：%s%s%s\n' "$NUMBER" "$LIGHT_GREEN" "$BACKUP_DIR" "$RESET"
   printf '%s快照目录：%s%s%s  -  %s备注：%ssnapshot%s\n' "$NUMBER" "$LIGHT_GREEN" "$BACKUP_DIR" "$RESET" "$NUMBER" "$LIGHT_GREEN" "$RESET"
   printf '%s日志目录：%s%s%s\n' "$NUMBER" "$LIGHT_GREEN" "$MIGRATION_LOG_DIR" "$RESET"
