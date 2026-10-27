@@ -98,8 +98,10 @@ assert main[-3:] == ['-' * 24, '0.  退出', '-' * 24], main
 
 assert_layout('migration-wide', [
     ('1.  导入并更换域名', '2.  导入并保留域名'),
-], separator_count=3)
+], separator_count=2)
 migration = read_plain('migration-wide').splitlines()
+title_index = migration.index('站点导入')
+assert migration[title_index + 1] == '-' * 51, migration
 third_index = migration.index('3.  查看最近一次操作日志')
 assert migration[third_index - 1] == '', migration
 assert migration[third_index + 1:third_index + 4] == ['-' * 24, '0.  返回上一级', '-' * 24], migration
