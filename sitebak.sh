@@ -2,7 +2,7 @@
 
 set -Eeuo pipefail
 
-VERSION="0.6.8"
+VERSION="0.6.9"
 APP_NAME="LDNMP 单站备份恢复工具"
 
 WEB_ROOT="${SITEBAK_WEB_ROOT:-/home/web}"
@@ -644,7 +644,7 @@ select_existing_domain() {
 confirm_numeric_target_domain() {
   local expected_domain="$1" confirmation
   while true; do
-    ui_prompt "已选择目标站点 ${expected_domain}，请输入完整域名确认："
+    ui_prompt "已选择目标站点 < ${expected_domain} > 请输入完整域名确认："
     ui_read confirmation 2 || return 1
     case "$confirmation" in
       "$expected_domain") return 0 ;;

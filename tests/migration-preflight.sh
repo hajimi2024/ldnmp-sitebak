@@ -138,14 +138,14 @@ if ! migration_preflight change-domain < <(printf '%s\n' 1 1 target.example no) 
   cat "$fixture/numeric-target-output" >&2
   exit 1
 fi
-grep -Fq '已选择目标站点 target.example，请输入完整域名确认' "$fixture/numeric-target-output"
+grep -Fq '已选择目标站点 < target.example > 请输入完整域名确认' "$fixture/numeric-target-output"
 grep -Fq '✅ 已验证目标站点 target.example 为空站点。' "$fixture/numeric-target-output"
 
 if ! migration_preflight change-domain < <(printf '%s\n' 1 target.example no) > "$fixture/domain-target-output" 2>&1; then
   cat "$fixture/domain-target-output" >&2
   exit 1
 fi
-! grep -Fq '已选择目标站点 target.example，请输入完整域名确认' "$fixture/domain-target-output"
+! grep -Fq '已选择目标站点 < target.example > 请输入完整域名确认' "$fixture/domain-target-output"
 grep -Fq '✅ 已验证目标站点 target.example 为空站点。' "$fixture/domain-target-output"
 
 # A cancelled stage-three confirmation preserves phase-two's zero-write behavior.
