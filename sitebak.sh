@@ -2,7 +2,7 @@
 
 set -Eeuo pipefail
 
-VERSION="0.7.10"
+VERSION="0.7.11"
 APP_NAME="LDNMP 单站备份恢复工具"
 
 WEB_ROOT="${SITEBAK_WEB_ROOT:-/home/web}"
@@ -652,10 +652,15 @@ site_database_is_empty() {
 }
 
 list_empty_sites_array() {
-  local domain
-  while IFS= read -r domain; do
-    site_database_is_empty "$domain" >/dev/null 2>&1 && printf '%s\n' "$domain"
-  done < <(list_sites_array)
+  local sites=() domain
+  # 与“列出 WordPress 站点”使用同一份实时发现结果，避免两个列表因
+  # 不同枚举路径或排序管道出现站点遗漏；数据库状态仍逐站实时检查。
+  mapfile -t sites < <(list_sites_by_creation_array)
+  for domain in "${sites[@]}"; do
+    if site_database_is_empty "$domain" >/dev/null 2>&1; then
+      printf '%s\n' "$domain"
+    fi
+  done
 }
 
 select_domain() {

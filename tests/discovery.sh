@@ -73,4 +73,8 @@ list_sites_with_status > "$tmp/cli-sites"
 grep -Fxq 'newer-empty.example（空站点）' "$tmp/cli-sites"
 grep -Fxq 'nonempty.example' "$tmp/cli-sites"
 grep -Fxq 'older-empty.example（空站点）' "$tmp/cli-sites"
+select_existing_domain '请选择已预建的空 WordPress 目标站点' < <(printf '0\n') > /dev/null 2> "$tmp/empty-targets" || true
+grep -Fq '1. newer-empty.example' "$tmp/empty-targets"
+grep -Fq '2. older-empty.example' "$tmp/empty-targets"
+! grep -Fq 'nonempty.example' "$tmp/empty-targets"
 printf 'PASS: discovery, empty state, DB config, menu output, ambiguous config and approved Banner\n'
