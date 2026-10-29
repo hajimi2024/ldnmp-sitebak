@@ -2,7 +2,7 @@
 
 set -Eeuo pipefail
 
-VERSION="0.7.13"
+VERSION="0.7.14"
 APP_NAME="LDNMP 单站备份恢复工具"
 
 WEB_ROOT="${SITEBAK_WEB_ROOT:-/home/web}"
@@ -1496,8 +1496,35 @@ replace_migration_wp_define() {
   mv -f -- "$output" "$config"
 }
 
+adapt_migration_url_constants() {
+  local config="$1" source_domain="$2" target_url="$3" output mode
+  mode="$(stat -c '%a' "$config")" || return 1
+  output="$(mktemp "$(dirname -- "$config")/.wp-config.url.XXXXXX")" || return 1
+  if ! awk -v source_domain="$source_domain" -v target_url="$target_url" '
+    /WP_HOME|WP_SITEURL/ {
+      if ($0 ~ /^[[:space:]]*(\/\/|#|\/\*|\*)/) { print; next }
+      if ($0 !~ /^[[:space:]]*define[[:space:]]*\([[:space:]]*["\047]WP_(HOME|SITEURL)["\047][[:space:]]*,[[:space:]]*["\047]https?:\/\/[A-Za-z0-9.-]+["\047][[:space:]]*\)[[:space:]]*;[[:space:]]*(\/\/.*)?$/) exit 41
+      key = ($0 ~ /^[[:space:]]*define[[:space:]]*\([[:space:]]*["\047]WP_HOME["\047]/) ? "WP_HOME" : "WP_SITEURL"
+      value = $0
+      sub(/^[^,]*,[[:space:]]*["\047]/, "", value)
+      sub(/["\047][[:space:]]*\).*/, "", value)
+      if (value != "http://" source_domain && value != "https://" source_domain && value != target_url) exit 42
+      if (++seen[key] != 1) exit 43
+      print "define(\047" key "\047, \047" target_url "\047);"
+      next
+    }
+    { print }
+  ' "$config" > "$output"; then
+    rm -f -- "$output"
+    err '源站 wp-config.php 的 WP_HOME/WP_SITEURL 不能唯一安全适配目标网址，尚未写入目标站点。'
+    return 1
+  fi
+  chmod "$mode" "$output" || { rm -f -- "$output"; return 1; }
+  mv -f -- "$output" "$config" || { rm -f -- "$output"; return 1; }
+}
+
 prepare_migration_stage() {
-  local source_wp_root="$1" target_wp_config="$2" stage_root="$3" key replacement_file staged_config source_prefix staged_prefix
+  local source_wp_root="$1" target_wp_config="$2" stage_root="$3" source_domain="$4" target_url="$5" key replacement_file staged_config source_prefix staged_prefix
   source_prefix="$(validate_wp_table_prefix "$source_wp_root/wp-config.php" '源站 WordPress 配置')" || return 1
   mkdir -p "$stage_root"
   cp -a -- "$source_wp_root/." "$stage_root/"
@@ -1510,6 +1537,7 @@ prepare_migration_stage() {
     replace_migration_wp_define "$staged_config" "$key" "$replacement_file" || { rm -f -- "$replacement_file"; return 1; }
     rm -f -- "$replacement_file"
   done
+  adapt_migration_url_constants "$staged_config" "$source_domain" "$target_url" || return 1
   validate_migration_wp_config "$staged_config" '暂存 WordPress 配置' || return 1
   for key in DB_NAME DB_USER DB_PASSWORD DB_HOST; do
     if [[ "$(parse_migration_wp_define "$staged_config" "$key")" != "$(parse_migration_wp_define "$target_wp_config" "$key")" ]]; then
@@ -2181,7 +2209,7 @@ finalize_wordpress_migration() {
   normalized_siteurl="$(normalize_wp_url "$current_siteurl")"
   normalized_effective_home="$(normalize_wp_url "$effective_home")"
   normalized_effective_siteurl="$(normalize_wp_url "$effective_siteurl")"
-  migration_log INFO "最终网址校验；期望=$normalized_target；数据库home=$normalized_home；数据库siteurl=$normalized_siteurl；有效home=$normalized_effective_home；有效siteurl=$normalized_effective_siteurl"
+  migration_log INFO "最终网址校验；期望=$normalized_target；WordPress读取home=$normalized_home；WordPress读取siteurl=$normalized_siteurl；有效home=$normalized_effective_home；有效siteurl=$normalized_effective_siteurl"
   if [[ "$normalized_effective_home" != "$normalized_target" || "$normalized_effective_siteurl" != "$normalized_target" ]]; then
     migration_log ERROR "最终网址校验失败；有效home=$normalized_effective_home；有效siteurl=$normalized_effective_siteurl；期望=$normalized_target"
     err "❌ 站点 $target_domain 导入失败。"
@@ -2189,8 +2217,8 @@ finalize_wordpress_migration() {
     return 1
   fi
   if [[ "$normalized_home" != "$normalized_target" || "$normalized_siteurl" != "$normalized_target" ]]; then
-    migration_log WARN 'WP_HOME/WP_SITEURL 常量或其他配置覆盖了数据库网址选项，但有效运行网址已正确。'
-    warn '有效运行网址已经正确，但数据库 home/siteurl 被配置常量覆盖，请后续人工检查。'
+    migration_log WARN 'WordPress 选项读取值与有效运行网址不一致，可能存在常量或过滤器覆盖。'
+    warn '有效运行网址已经正确，但 WordPress 选项读取值与其不一致，请后续人工检查。'
   fi
   [[ "$(run_wp_cli --skip-plugins --skip-themes config get table_prefix --type=variable)" == "$prefix" ]] || {
     err '最终 WordPress 表前缀校验失败。'
@@ -2708,11 +2736,12 @@ migration_preflight() (
 
   migration_stage_begin 'WordPress 文件暂存'
   migration_stage_status '正在构建 WordPress 文件暂存区，请耐心等待。'
-  prepare_migration_stage "$MIGRATION_SOURCE_WP_ROOT" "$target_wp_config" "$tmp/staged-wordpress" || {
+  prepare_migration_stage "$MIGRATION_SOURCE_WP_ROOT" "$target_wp_config" "$tmp/staged-wordpress" "$MIGRATION_SOURCE_DOMAIN" "$target_url" || {
     migration_log ERROR 'WordPress Root 暂存构建失败。'
     migration_stage_status 'WordPress 文件暂存失败。'
     return 1
   }
+  migration_log INFO "暂存 WordPress 网址常量检查通过；目标网址=$target_url"
   migration_stage_complete 'WordPress 文件暂存完成'
   [[ "$(parse_migration_wp_define "$tmp/staged-wordpress/wp-config.php" DB_NAME)" == "$DB_NAME" ]] || {
     err '暂存 WordPress 配置未正确使用目标数据库。'

@@ -112,10 +112,15 @@ start_case() {
 }
 
 create_source_backup() {
-  local domain="$1" layout="$2" db="$3" root
+  local domain="$1" layout="$2" db="$3" url_constants="${4:-no}" root
   root="$SITE_ROOT/$domain"
   [[ "$layout" != nested ]] || root="$root/wordpress"
   write_wp_config "$root/wp-config.php" "$db" source_user source_password source_
+  if [[ "$url_constants" == yes ]]; then
+    printf "define('WP_HOME', 'https://%s');\ndefine('WP_SITEURL', 'https://%s');\n" "$domain" "$domain" >> "$root/wp-config.php"
+  elif [[ "$url_constants" == dynamic ]]; then
+    printf '%s\n' "define('WP_HOME', 'https://' . \$_SERVER['HTTP_HOST']);" >> "$root/wp-config.php"
+  fi
   mkdir -p "$root/wp-content/uploads"
   printf 'source:%s\n' "$domain" > "$root/index.php"
   printf 'media\n' > "$root/wp-content/uploads/file.txt"
@@ -140,7 +145,7 @@ write_target_nginx() {
 
 # Change-domain import writes only the selected target Root and target database.
 start_case change-success
-create_source_backup old.example direct source_db
+create_source_backup old.example direct source_db yes
 archive="$BACKUP_DIR/old.example_${fixture_stamp}.tar.gz"
 create_target_site new.example nested target_db
 write_target_nginx new.example
@@ -169,6 +174,8 @@ grep -Fq '正在替换目标 WordPress Root' "$fixture/change-output"
 [[ $(parse_migration_wp_define "$SITE_ROOT/new.example/wordpress/wp-config.php" DB_PASSWORD) == target_password ]]
 [[ $(parse_migration_wp_define "$SITE_ROOT/new.example/wordpress/wp-config.php" DB_HOST) == mysql ]]
 [[ $(parse_wp_table_prefix "$SITE_ROOT/new.example/wordpress/wp-config.php") == source_ ]]
+grep -Fq "define('WP_HOME', 'http://new.example');" "$SITE_ROOT/new.example/wordpress/wp-config.php"
+grep -Fq "define('WP_SITEURL', 'http://new.example');" "$SITE_ROOT/new.example/wordpress/wp-config.php"
 [[ $(< "$SITE_ROOT/new.example/outside.keep") == 'outside target root' ]]
 grep -Fq 'CREATE TABLE' "$fixture/imported.sql"
 [[ "$(sha256sum "${NGINX_CONF_DIRS[0]}/new.example.conf")" == "$nginx_before" ]]
@@ -224,6 +231,19 @@ migration_preflight change-domain < <(printf '%s\n' 1 1 new.example no) > "$fixt
 grep -Fq '已取消操作' "$fixture/cancel-output"
 diff -r "$fixture/cancel-before" "$SITE_ROOT/new.example"
 [[ ! -e "$fixture/imported.sql" ]]
+
+# A dynamic source URL constant is rejected during staging, before confirmation or target writes.
+start_case dynamic-url
+create_source_backup old.example direct source_db dynamic
+create_target_site new.example nested target_db
+write_target_nginx new.example
+cp -a "$SITE_ROOT/new.example" "$fixture/dynamic-before"
+expect_failure migration_preflight change-domain < <(printf '%s\n' 1 1 new.example yes)
+grep -Fq '不能唯一安全适配目标网址' "$fixture/failure-output"
+diff -r "$fixture/dynamic-before" "$SITE_ROOT/new.example"
+[[ ! -e "$fixture/imported.sql" ]]
+[[ ! -s "$db_tables_file" ]]
+[[ -z "$(find "$MIGRATION_TMP_ROOT" -mindepth 1 -print -quit)" ]]
 
 # A non-empty database, an invalid mode target and an import failure all stop safely.
 start_case nonempty

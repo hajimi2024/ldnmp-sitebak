@@ -118,7 +118,7 @@ sed -i '1a // define('\''DB_NAME'\'', '\''commented_fake_db'\'');' "$target_conf
 read_migration_db_config_file "$target_config"
 [[ "$DB_NAME" == target_db ]]
 cp -a "$SITE_ROOT/target.example" "$fixture/target-before"
-prepare_migration_stage "$MIGRATION_SOURCE_WP_ROOT" "$target_config" "$inspect_root/staged"
+prepare_migration_stage "$MIGRATION_SOURCE_WP_ROOT" "$target_config" "$inspect_root/staged" source.example https://target.example
 [[ $(< "$inspect_root/staged/index.php") == 'source:source.example' ]]
 for key in DB_NAME DB_USER DB_PASSWORD DB_HOST; do
   [[ "$(parse_migration_wp_define "$inspect_root/staged/wp-config.php" "$key")" == "$(parse_migration_wp_define "$target_config" "$key")" ]]

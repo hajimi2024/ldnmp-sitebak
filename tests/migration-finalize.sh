@@ -107,7 +107,7 @@ mock_effective_siteurl='https://new.example'
 elementor_installed=no
 migration_log_init constant-override
 finalize_wordpress_migration change-domain old.example new.example https://new.example locked source_ > "$fixture/constant-output" 2>&1
-grep -Fq '有效运行网址已经正确，但数据库 home/siteurl 被配置常量覆盖' "$fixture/constant-output"
+grep -Fq '有效运行网址已经正确，但 WordPress 选项读取值与其不一致' "$fixture/constant-output"
 mock_effective_home=''
 mock_effective_siteurl=''
 
