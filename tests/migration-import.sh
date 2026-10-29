@@ -154,6 +154,7 @@ if ! migration_preflight change-domain < <(printf '%s\n' 1 1 new.example yes) > 
   exit 1
 fi
 grep -Fq '✅ 站点 new.example 已成功导入。' "$fixture/change-output"
+grep -Fq '🚨 警告：即将为 new.example 注入文件 & 数据库。' "$fixture/change-output"
 grep -Fq '✅ 已验证目标站点 < new.example > 为空站点，允许继续导入。' "$fixture/change-output"
 grep -Fq 'WordPress 后台：http://new.example/wp-admin' "$fixture/change-output"
 grep -Fq '适用于跨服务器导入并更换域名' "$fixture/change-output"
