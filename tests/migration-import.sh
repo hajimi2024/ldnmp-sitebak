@@ -72,6 +72,9 @@ assert_progress_output() {
     for stage in {1..8}; do
       grep -Fq "0% 阶段${stage}/8" "$file"
     done
+    for checkpoint in 25 50 75; do
+      grep -Fq "${checkpoint}% 阶段2/8" "$file"
+    done
     [[ $(grep -c '100% 阶段[1-8]/8：' "$file") == 8 ]]
     [[ $(grep -c '100% 阶段[1-8]/8：.*完成' "$file") == 8 ]]
   else

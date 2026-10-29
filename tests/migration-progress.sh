@@ -63,6 +63,12 @@ COLUMNS=50
 migration_progress_begin '准备'
 migration_progress_set 60 '正在解压站点文件'
 migration_progress_end
+MIGRATION_STAGE_INDEX=7
+migration_stage_begin '站点配置检查'
+migration_progress_set 94 '正在清理站点瞬态缓存'
+migration_progress_set 99 '正在检查目标网址'
+migration_stage_complete '站点配置与目标网址校验完成'
+ok '站点已成功导入'
 '''
 env = os.environ.copy()
 env.pop('NO_COLOR', None)
@@ -89,6 +95,9 @@ assert '\x1b[0;32m' in output, output
 assert '\x1b[0;90m' in output, output
 plain = re.sub(r'\x1b\[[0-9;]*[mK]', '', output).replace('\r', '')
 assert '60% 正在解压站点文件' in plain, plain
+stage_lines = [line for line in plain.splitlines() if '阶段8/8' in line]
+assert len(stage_lines) == 1, stage_lines
+assert '100% 阶段8/8：站点配置与目标网址校验完成' in stage_lines[0], stage_lines
 PY
 
 printf 'PASS: monotonic migration progress, adaptive width, colors, success and failure boundaries\n'

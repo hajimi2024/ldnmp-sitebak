@@ -75,10 +75,10 @@ finalize_wordpress_migration change-domain old.example new.example https://new.e
 grep -Fq -- '--regex' "$commands"
 grep -Fq 'elementor replace_urls' "$commands"
 grep -Fq 'elementor flush_css --regenerate' "$commands"
-grep -Fq 'rewrite flush' "$commands"
+! grep -Fq 'rewrite flush' "$commands"
 grep -Fq 'transient delete --all' "$commands"
 ! grep -Fq 'cache flush' "$commands"
-grep -Fq '历史日志或授权记录' "$fixture/change-output"
+! grep -Fq '请人工检查首页' "$fixture/change-output"
 grep -Fq 'GUID始终跳过' "$MIGRATION_LOG_FILE"
 
 # WP-CLI 已知序列化警告只在终端汇总，原始警告写入迁移日志。

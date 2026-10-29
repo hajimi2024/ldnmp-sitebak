@@ -2,7 +2,7 @@
 
 set -Eeuo pipefail
 
-VERSION="0.7.14"
+VERSION="0.7.15"
 APP_NAME="LDNMP 单站备份恢复工具"
 
 WEB_ROOT="${SITEBAK_WEB_ROOT:-/home/web}"
@@ -290,6 +290,7 @@ migration_stage_complete() {
   if [[ -t 1 && ${TERM:-} != dumb ]]; then
     printf '\n'
   fi
+  MIGRATION_PROGRESS_LINE_OPEN=no
   MIGRATION_STAGE_LINE_OPEN=no
   [[ -z "$MIGRATION_LOG_FILE" ]] || migration_log INFO "阶段${MIGRATION_STAGE_INDEX}/8 完成：$message"
   MIGRATION_STAGE_ACTIVE=no
@@ -1422,6 +1423,7 @@ inspect_migration_archive() {
 
   migration_progress '正在检查并解压外层备份包，大文件可能需要数分钟，请耐心等待。'
   extract_safe_tar "$archive" "$package_dir" '外层备份包' no || return 1
+  migration_progress_set 25 '外层备份包检查与解压完成。'
   manifest="$package_dir/manifest.json"
   [[ -f "$manifest" ]] || { err '备份包缺少 manifest.json。'; return 1; }
   [[ -f "$package_dir/files/site-files.tar.gz" ]] || { err '备份包缺少站点文件。'; return 1; }
@@ -1449,6 +1451,7 @@ inspect_migration_archive() {
   [[ -f "$package_dir/database/${db_name}.sql.gz" ]] || { err '备份包缺少清单指定的数据库文件。'; return 1; }
   gzip -t "$package_dir/database/${db_name}.sql.gz" || { err '数据库压缩文件校验失败。'; return 1; }
   MIGRATION_SOURCE_DB="$db_name"
+  migration_progress_set 50 '备份清单与数据库压缩文件检查完成。'
 
   for component in nginx certs; do
     case "$component" in
@@ -1463,6 +1466,7 @@ inspect_migration_archive() {
 
   migration_progress '正在解压并检查站点文件，请耐心等待。'
   extract_safe_tar "$package_dir/files/site-files.tar.gz" "$source_site_dir" '站点文件包' yes || return 1
+  migration_progress_set 75 '站点文件包检查与解压完成。'
   wp_config="$(find_wp_config "$source_site_dir")" || { err '备份包中无法唯一确定 WordPress Root。'; return 1; }
   validate_migration_wp_config "$wp_config" '源站 WordPress 配置' || return 1
   source_db_name="$(parse_migration_wp_define "$wp_config" DB_NAME)"
@@ -2194,10 +2198,9 @@ finalize_wordpress_migration() {
   migration_progress_set 94 'Elementor 检查和修复完成。'
 
   revalidate_migration_target_scope "$target_domain" "$locked_identity" "$prefix" || return 1
-  migration_progress '正在刷新固定链接与站点瞬态缓存。'
-  run_wp_cli --skip-plugins --skip-themes rewrite flush >/dev/null || return 1
+  migration_progress '正在清理站点瞬态缓存。'
   run_wp_cli --skip-plugins --skip-themes transient delete --all >/dev/null || return 1
-  migration_progress_set 96 '固定链接与站点瞬态缓存刷新完成。'
+  migration_progress_set 96 '站点瞬态缓存清理完成。'
 
   migration_progress '正在检查站点配置。'
   current_home="$(run_wp_cli --skip-plugins --skip-themes option get home)" || return 1
@@ -2228,7 +2231,6 @@ finalize_wordpress_migration() {
   revalidate_migration_target_scope "$target_domain" "$locked_identity" "$prefix" || return 1
   migration_log INFO "WordPress 收尾完成；源域名=$source_domain；目标域名=$target_domain；目标网址=$target_url；数据库=$MIGRATION_TARGET_DB_NAME；表前缀=$prefix；GUID始终跳过"
   migration_progress_set 99 'WordPress 配置与数据库状态检查完成。'
-  warn '请人工检查首页、后台、媒体库、文章页面和 Elementor 编辑器；历史日志或授权记录中的旧域名可能仍需人工核查。'
 }
 
 restore_site() (
@@ -2830,7 +2832,7 @@ migration_preflight() (
     err "❌ 站点 ${target_domain:-目标站点} 导入失败；WordPress 收尾未完成。目标站点可能已部分写入，请重新准备空白目标站点后从头导入。"
     return 1
   }
-  migration_stage_complete 'WordPress 收尾与最终验证完成'
+  migration_stage_complete '站点配置与目标网址校验完成'
   ok "✅ 站点 $target_domain 已成功导入。"
   admin_url="${target_url%/}/wp-admin"
   printf '%sWordPress 后台：%s\n' "$BLUE" "$(terminal_link "$admin_url" "$admin_url")"
