@@ -26,6 +26,7 @@ touch "$fixture/html/example.com/wp-config.php" "$fixture/html/second.example/wp
   set +e
   SITE_ROOT="$fixture/html"
   header() { :; }
+  site_database_is_empty() { return 0; }
   select_existing_domain '请选择目标站点' < <(printf '0\n')
 ) > /dev/null 2> "$fixture/target-selection" || true
 (

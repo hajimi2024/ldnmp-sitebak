@@ -230,8 +230,8 @@ create_target_site new.example nested target_db
 write_target_nginx new.example
 printf 'existing_table\n' > "$db_tables_file"
 cp -a "$SITE_ROOT/new.example" "$fixture/nonempty-before"
-expect_failure migration_preflight change-domain < <(printf '%s\n' 1 1 new.example)
-grep -Fq '目标数据库不是空库' "$fixture/failure-output"
+migration_preflight change-domain < <(printf '%s\n' 1 1 new.example) > "$fixture/failure-output" 2>&1 || true
+grep -Fq '空 WordPress 目标站点' "$fixture/failure-output"
 diff -r "$fixture/nonempty-before" "$SITE_ROOT/new.example"
 
 start_case wrong-target

@@ -69,4 +69,8 @@ show_sites > "$tmp/empty-sites"
 grep -Fq '1. newer-empty.example（空站点）' "$tmp/empty-sites"
 grep -Fq '2. nonempty.example' "$tmp/empty-sites"
 grep -Fq '3. older-empty.example（空站点）' "$tmp/empty-sites"
+list_sites_with_status > "$tmp/cli-sites"
+grep -Fxq 'newer-empty.example（空站点）' "$tmp/cli-sites"
+grep -Fxq 'nonempty.example' "$tmp/cli-sites"
+grep -Fxq 'older-empty.example（空站点）' "$tmp/cli-sites"
 printf 'PASS: discovery, empty state, DB config, menu output, ambiguous config and approved Banner\n'

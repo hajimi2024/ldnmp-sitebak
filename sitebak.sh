@@ -2,7 +2,7 @@
 
 set -Eeuo pipefail
 
-VERSION="0.7.7"
+VERSION="0.7.8"
 APP_NAME="LDNMP 单站备份恢复工具"
 
 WEB_ROOT="${SITEBAK_WEB_ROOT:-/home/web}"
@@ -624,12 +624,19 @@ site_database_is_empty() {
   [[ -z "${tables//[[:space:]]/}" ]]
 }
 
+list_empty_sites_array() {
+  local domain
+  while IFS= read -r domain; do
+    site_database_is_empty "$domain" >/dev/null 2>&1 && printf '%s\n' "$domain"
+  done < <(list_sites_array)
+}
+
 select_domain() {
   local title="${1:-请选择站点}" intro="${2:-}"
-  local sites=()
-  mapfile -t sites < <(list_sites_array)
+  local sites=() domain suffix i
 
   while true; do
+    mapfile -t sites < <(list_sites_array)
     header >&2
     if [[ -n "$intro" ]]; then
       printf '\n' >&2
@@ -642,9 +649,13 @@ select_domain() {
     if ((${#sites[@]} == 0)); then
       warn "未在 $SITE_ROOT 下找到 WordPress 站点。检查域名目录或其 wordpress 子目录中的 wp-config.php；同时存在两份配置时不自动选择。" >&2
     else
-      local i
       for i in "${!sites[@]}"; do
-        printf '%s%d.%s %s%s\n' "$NUMBER" "$((i + 1))" "$BLUE" "${sites[$i]}" "$RESET" >&2
+        domain="${sites[$i]}"
+        suffix=''
+        if site_database_is_empty "$domain" >/dev/null 2>&1; then
+          suffix="${GREEN}（空站点）${RESET}"
+        fi
+        printf '%s%d.%s %s%s%s\n' "$NUMBER" "$((i + 1))" "$BLUE" "$domain" "$suffix" "$RESET" >&2
         ((i + 1 < ${#sites[@]})) && printf '\n' >&2
       done
     fi
@@ -687,14 +698,14 @@ select_existing_domain() {
   local title="${1:-请选择目标站点}" output_var="${2:-}" choice number domain selected
   local sites=()
   SELECTED_DOMAIN_INPUT_KIND=''
-  mapfile -t sites < <(list_sites_array)
 
   while true; do
+    mapfile -t sites < <(list_empty_sites_array)
     header >&2
     printf '%s%s：%s\n' "$BOLD" "$title" "$RESET" >&2
     menu_separator >&2
     if ((${#sites[@]} == 0)); then
-      warn "未在 $SITE_ROOT 下找到可用的 WordPress 目标站点。" >&2
+      warn "未在 $SITE_ROOT 下找到可用的空 WordPress 目标站点。" >&2
     else
       local i
       for i in "${!sites[@]}"; do
@@ -2374,6 +2385,17 @@ show_sites() {
   fi
 }
 
+list_sites_with_status() {
+  local domain suffix
+  while IFS= read -r domain; do
+    suffix=''
+    if site_database_is_empty "$domain" >/dev/null 2>&1; then
+      suffix='（空站点）'
+    fi
+    printf '%s%s\n' "$domain" "$suffix"
+  done < <(list_sites_array)
+}
+
 show_backups() {
   header
   local backups=() filter="${1:-backup}" title
@@ -2817,7 +2839,7 @@ main() {
       main_menu
       ;;
     list)
-      list_sites_array
+      list_sites_with_status
       ;;
     backup)
       need_root

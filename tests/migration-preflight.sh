@@ -195,8 +195,8 @@ diff -r "$fixture/unrelated-before" "$SITE_ROOT/zzz.example"
 
 # A non-empty target database must stop before any target file change.
 db_tables='wp_options'
-expect_failure migration_preflight change-domain < <(printf '%s\n' 1 1 target.example)
-if ! grep -Fq '目标数据库不是空库' "$fixture/failure-output"; then
+migration_preflight change-domain < <(printf '%s\n' 1 1 target.example) > "$fixture/failure-output" 2>&1 || true
+if ! grep -Fq '未在' "$fixture/failure-output" || ! grep -Fq '空 WordPress 目标站点' "$fixture/failure-output"; then
   cat "$fixture/failure-output" >&2
   exit 1
 fi
