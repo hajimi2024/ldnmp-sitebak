@@ -114,6 +114,26 @@ assert_state C
 [[ $(list_backups_for_domain example.com snapshots | wc -l) == 3 ]]
 show_backups snapshots > "$fixture/list.log"
 grep -q '旧版文件快照' "$fixture/list.log"
+python3 - "$fixture/list.log" <<'PY'
+import re, sys, unicodedata
+
+def display_width(text):
+    width = 0
+    for char in text:
+        width += 2 if unicodedata.east_asian_width(char) in ('W', 'F') else 1
+    return width
+
+columns = []
+for raw in open(sys.argv[1], encoding='utf-8'):
+    line = re.sub(r'\x1b\[[0-9;]*m', '', raw.rstrip('\n'))
+    if line.startswith('['):
+        match = re.search(r'  +(\S+)  +(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})$', line)
+        if match:
+            columns.append((display_width(line[:match.start(1)]), display_width(line[:match.start(2)])))
+assert len(columns) >= 2, columns
+assert len({column[0] for column in columns}) == 1, columns
+assert len({column[1] for column in columns}) == 1, columns
+PY
 
 # Multiple versions, malformed numbers, and warnings must not pollute selection.
 selected="$(select_backup example.com snapshot < <(printf 'x\n999999999999999999999\n01\n') 2> "$fixture/selection.log")"

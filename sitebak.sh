@@ -2,7 +2,7 @@
 
 set -Eeuo pipefail
 
-VERSION="0.7.4"
+VERSION="0.7.5"
 APP_NAME="LDNMP 单站备份恢复工具"
 
 WEB_ROOT="${SITEBAK_WEB_ROOT:-/home/web}"
@@ -1086,6 +1086,59 @@ archive_label() {
   esac
 }
 
+terminal_text_width() {
+  local text="$1" width
+  width="$(printf '%s' "$text" | wc -L 2>/dev/null || true)"
+  [[ "$width" =~ ^[0-9]+$ ]] || width="${#text}"
+  printf '%s' "$width"
+}
+
+pad_terminal_text() {
+  local text="$1" width="$2" current padding
+  current="$(terminal_text_width "$text")"
+  padding=$((width - current))
+  printf '%s' "$text"
+  if ((padding > 0)); then
+    printf '%*s' "$padding" ''
+  fi
+}
+
+render_archive_list() {
+  local output_fd="$1"
+  shift
+  local show_number="$1"
+  shift
+  local files=("$@") labels=() names=() sizes=() mtimes=()
+  local file label name size mtime i label_width=0 name_width=0 size_width=0 width
+  for file in "${files[@]}"; do
+    label="[$(archive_label "$file")]"
+    name="${file##*/}"
+    size="$(du -h "$file" | awk '{print $1}')"
+    mtime="$(date -r "$file" +"%Y-%m-%d %H:%M:%S")"
+    labels+=("$label")
+    names+=("$name")
+    sizes+=("$size")
+    mtimes+=("$mtime")
+    width="$(terminal_text_width "$label")"; ((width > label_width)) && label_width=$width
+    width="$(terminal_text_width "$name")"; ((width > name_width)) && name_width=$width
+    width="$(terminal_text_width "$size")"; ((width > size_width)) && size_width=$width
+  done
+
+  for i in "${!files[@]}"; do
+    if [[ "$show_number" == yes ]]; then
+      printf '%s%d.%s ' "$NUMBER" "$((i + 1))" "$BLUE" >&"$output_fd"
+    else
+      printf '%s' "$BLUE" >&"$output_fd"
+    fi
+    pad_terminal_text "${labels[$i]}" "$label_width" >&"$output_fd"
+    printf '  ' >&"$output_fd"
+    pad_terminal_text "${names[$i]}" "$name_width" >&"$output_fd"
+    printf '  ' >&"$output_fd"
+    pad_terminal_text "${sizes[$i]}" "$size_width" >&"$output_fd"
+    printf '  %s%s\n' "${mtimes[$i]}" "$RESET" >&"$output_fd"
+  done
+}
+
 list_backups_for_domain() {
   local domain="${1:-}" filter="${2:-backup}" file kind name
   [[ -d "$BACKUP_DIR" ]] || return 0
@@ -1138,13 +1191,7 @@ select_backup() {
       continue
     fi
 
-    local i file size mtime
-    for i in "${!backups[@]}"; do
-      file="${backups[$i]}"
-      size="$(du -h "$file" | awk '{print $1}')"
-      mtime="$(date -r "$file" +"%Y-%m-%d %H:%M:%S")"
-      printf '%s%d.%s [%s] %s    %s    %s%s\n' "$NUMBER" "$((i + 1))" "$BLUE" "$(archive_label "$file")" "$(basename "$file")" "$size" "$mtime" "$RESET" >&2
-    done
+    render_archive_list 2 yes "${backups[@]}"
     render_return_section >&2
     ui_prompt "请选择要${action}的文件：" >&2
     ui_read choice 2 || return 1
@@ -2340,10 +2387,7 @@ show_backups() {
   if ((${#backups[@]} == 0)); then
     warn "未找到${title}文件。"
   else
-    local file
-    for file in "${backups[@]}"; do
-      printf '%s[%s] %s    %s    %s%s\n' "$BLUE" "$(archive_label "$file")" "$(basename "$file")" "$(du -h "$file" | awk '{print $1}')" "$(date -r "$file" +"%Y-%m-%d %H:%M:%S")" "$RESET"
-    done
+    render_archive_list 1 no "${backups[@]}"
   fi
 }
 

@@ -19,6 +19,26 @@ touch -t 202609140900 "$legacy"
 show_backups > "$fixture/normal-list"
 grep -Fq "$(basename "$normal")" "$fixture/normal-list"
 ! grep -Eq '_snapshot_|_before_restore_' "$fixture/normal-list"
+
+# 不同长度的域名仍应让文件名、大小和时间列保持垂直对齐。
+wide="$BACKUP_DIR/a-very-long-domain.example_20260914_120000.tar.gz"
+dd if=/dev/zero of="$wide" bs=1K count=2 status=none
+touch -t 202609141200 "$wide"
+show_backups > "$fixture/aligned-list"
+python3 - "$fixture/aligned-list" <<'PY'
+import re, sys
+lines = []
+for raw in open(sys.argv[1], encoding='utf-8'):
+    line = re.sub(r'\x1b\[[0-9;]*m', '', raw.rstrip('\n'))
+    if line.startswith('[普通备份] '):
+        lines.append(line)
+assert len(lines) == 2, lines
+matches = [re.match(r'^\[普通备份\] (.+?)  +(\S+)  +(\S.*)$', line) for line in lines]
+assert all(matches), lines
+assert len({m.start(2) for m in matches}) == 1, lines
+assert len({m.start(3) for m in matches}) == 1, lines
+PY
+rm -f "$wide"
 show_backups snapshots > "$fixture/snapshot-list"
 grep -Fq "$(basename "$snapshot")" "$fixture/snapshot-list"
 grep -Fq "$(basename "$legacy")" "$fixture/snapshot-list"
