@@ -2,7 +2,7 @@
 
 set -Eeuo pipefail
 
-VERSION="0.7.12"
+VERSION="0.7.13"
 APP_NAME="LDNMP 单站备份恢复工具"
 
 WEB_ROOT="${SITEBAK_WEB_ROOT:-/home/web}"
@@ -36,6 +36,7 @@ MIGRATION_STAGE_LINE_OPEN=no
 DB_CLIENT_ANNOUNCED=''
 UI_PENDING_PROMPT=''
 UI_PENDING_INPUT_COLOR=''
+UI_PENDING_CONFIRM=no
 
 NGINX_CONF_DIRS=(
   "$WEB_ROOT/conf.d"
@@ -53,6 +54,7 @@ CERT_DIRS=(
 RED=$'\033[0;31m'
 GREEN=$'\033[0;32m'
 LIGHT_GREEN=$'\033[0;92m'
+CONFIRM_GREEN=$'\033[1;92m'
 YELLOW=$'\033[0;33m'
 PURPLE=$'\033[1;35m'
 BLUE=$'\033[0;96m'
@@ -65,7 +67,7 @@ NO_UNDERLINE=$'\033[24m'
 LINK_OPEN=''
 LINK_CLOSE=''
 if [[ ${TERM:-} == dumb || -n ${NO_COLOR+x} ]] || [[ ! -t 1 && ! -t 2 ]]; then
-  RED='' GREEN='' LIGHT_GREEN='' YELLOW='' PURPLE='' BLUE='' CYAN='' GRAY='' NUMBER='' BOLD='' RESET='' NO_UNDERLINE=''
+  RED='' GREEN='' LIGHT_GREEN='' CONFIRM_GREEN='' YELLOW='' PURPLE='' BLUE='' CYAN='' GRAY='' NUMBER='' BOLD='' RESET='' NO_UNDERLINE=''
 else
   LINK_OPEN=$'\033]8;;'"$PROJECT_URL"$'\033\\'
   LINK_CLOSE=$'\033]8;;\033\\'
@@ -97,6 +99,7 @@ err() {
 ui_prompt() {
   UI_PENDING_PROMPT="$1"
   UI_PENDING_INPUT_COLOR="$NUMBER"
+  UI_PENDING_CONFIRM=no
   # 交互终端把完整提示交给 Readline，让它知道提示文本的实际宽度；
   # 否则中文提示后的退格会把已经显示的提示一起重绘掉。
   if [[ ! -t 0 ]]; then
@@ -105,9 +108,11 @@ ui_prompt() {
 }
 ui_confirm_prompt() {
   UI_PENDING_PROMPT="$1"
-  UI_PENDING_INPUT_COLOR="$GREEN"
+  UI_PENDING_INPUT_COLOR="$CONFIRM_GREEN"
+  UI_PENDING_CONFIRM=yes
   if [[ ! -t 0 ]]; then
-    printf '%s%s%s' "$BOLD" "$1" "$GREEN"
+    local prefix="${1%%yes*}" suffix="${1#*yes}"
+    printf '%s%s%s%s%s%s%s' "$BOLD" "$prefix" "$CONFIRM_GREEN" 'yes' "$BOLD" "$suffix" "$CONFIRM_GREEN"
   fi
 }
 
@@ -323,15 +328,22 @@ show_recent_migration_log() {
 ui_read() {
   local variable="$1" output_fd="${2:-1}" status
   local prompt="${UI_PENDING_PROMPT:-}" input_color="${UI_PENDING_INPUT_COLOR:-$NUMBER}"
+  local is_confirm="${UI_PENDING_CONFIRM:-no}"
   UI_PENDING_PROMPT=''
   UI_PENDING_INPUT_COLOR=''
+  UI_PENDING_CONFIRM=no
   # 交互终端使用 Readline 处理 UTF-8 宽字符，并把提示作为 -p 参数传入；
   # 这样 Readline 能正确计算中文提示宽度，退格只会删除用户输入。
   if [[ -t 0 ]]; then
     local readline_prompt
     if [[ -n "$RESET" ]]; then
       # \001/\002 标记 ANSI 控制序列为不可见字符，避免光标定位偏移。
-      readline_prompt=$'\001'"$BOLD"$'\002'"$prompt"$'\001'"$input_color"$'\002'
+      if [[ "$is_confirm" == yes && "$prompt" == *yes* ]]; then
+        local prefix="${prompt%%yes*}" suffix="${prompt#*yes}"
+        readline_prompt=$'\001'"$BOLD"$'\002'"$prefix"$'\001'"$CONFIRM_GREEN"$'\002'yes$'\001'"$BOLD"$'\002'"$suffix"$'\001'"$input_color"$'\002'
+      else
+        readline_prompt=$'\001'"$BOLD"$'\002'"$prompt"$'\001'"$input_color"$'\002'
+      fi
     else
       readline_prompt="$prompt"
     fi

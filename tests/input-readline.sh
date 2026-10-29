@@ -84,14 +84,14 @@ assert 'SNAPSHOT:n' in output, output
 assert 'CONFIRM:ye' in output, output
 assert 'DELETION:y' in output, output
 assert 'TARGET_CONFIRM:target.exampl' in output, output
+assert '\x1b[1;92myes\x1b[1;96m 确认：\x1b[1;92m' in output, output
+assert '\x1b[1;92myes\x1b[1;96m 确认删除：\x1b[1;92m' in output, output
 for prompt in [
     '请输入你的选择：',
     '请输入编号，或直接输入域名：',
     '请输入目标站点编号或域名：',
     '请选择要查看的文件：',
     '恢复前是否创建完整快照（包含数据库）？[Y/n，0 返回] ',
-    '请输入 yes 确认：',
-    '请输入 yes 确认删除：',
     '已选择目标站点 < target.example > 请输入完整域名确认：',
 ]:
     assert prompt in output, (prompt, output)

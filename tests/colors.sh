@@ -77,7 +77,7 @@ for number in range(9):
 for label in ['版本：', '备份目录：', '快照目录：', '日志目录：', '备注：']:
     assert '\x1b[1;33m' + label + '\x1b[0;92m' in colored
 assert '\x1b[1;33m当前服务器：\x1b[1;35m' in colored
-for value in ['0.7.12', fixture + '/backups', '/home/sitebak-logs', 'snapshot']:
+for value in ['0.7.13', fixture + '/backups', '/home/sitebak-logs', 'snapshot']:
     assert '\x1b[0;92m' + value + '\x1b[0m' in colored
 assert '\x1b[0;92m' + fixture + '/html' + '\x1b[0m' not in colored
 assert '\x1b[1;35m@' in colored
@@ -96,7 +96,7 @@ divider_count = colored.count('\x1b[1;96m' + '-' * 38 + '\x1b[0m\n')
 assert divider_count >= 2 and divider_count % 2 == 0
 assert '\x1b[1;96m        单站备份恢复工具\x1b[0m\n' in colored
 assert '\x1b[1;96m请输入你的选择：\x1b[1;33m\x1b[0m' in colored
-assert '\x1b[1;96m请输入 yes 确认删除：\x1b[0;32m\x1b[0m' in colored
+assert '\x1b[1;96m请输入 \x1b[1;92myes\x1b[1;96m 确认删除：\x1b[1;92m\x1b[0m' in colored
 assert run(terminal=True, NO_COLOR='1') == plain
 assert run(terminal=True, TERM='dumb') == plain
 assert '\nSELECTED_SITE:example.com\n' in colored
