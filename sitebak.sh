@@ -2,7 +2,7 @@
 
 set -Eeuo pipefail
 
-VERSION="0.7.15"
+VERSION="0.7.16"
 APP_NAME="LDNMP 单站备份恢复工具"
 
 WEB_ROOT="${SITEBAK_WEB_ROOT:-/home/web}"
@@ -2836,7 +2836,6 @@ migration_preflight() (
   ok "✅ 站点 $target_domain 已成功导入。"
   admin_url="${target_url%/}/wp-admin"
   printf '%sWordPress 后台：%s\n' "$BLUE" "$(terminal_link "$admin_url" "$admin_url")"
-  info '本阶段未修改 Nginx、SSL，也未重启共享容器。'
   ok "操作日志已保存：$MIGRATION_LOG_FILE"
 )
 
