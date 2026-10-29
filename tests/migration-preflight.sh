@@ -96,6 +96,7 @@ expect_failure() {
 }
 
 # Build a real ordinary SiteBak archive with a direct source WordPress Root.
+write_https_nginx source.example
 create_source_backup source.example direct source_db
 archive="$BACKUP_DIR/source.example_${fixture_stamp}.tar.gz"
 [[ -f "$archive" ]]
@@ -109,6 +110,7 @@ cp -a "$SITE_ROOT/zzz.example" "$fixture/unrelated-before"
 inspect_root="$fixture/inspect"
 inspect_migration_archive "$archive" "$inspect_root/package" "$inspect_root/source-site"
 [[ "$MIGRATION_SOURCE_DOMAIN" == source.example ]]
+[[ "$MIGRATION_SOURCE_URL" == https://source.example ]]
 [[ "$MIGRATION_SOURCE_DB" == source_db ]]
 [[ "$MIGRATION_SOURCE_TABLE_PREFIX" == source_ ]]
 [[ "$MIGRATION_SOURCE_WP_ROOT" == "$inspect_root/source-site" ]]
@@ -154,7 +156,9 @@ if ! migration_preflight change-domain < <(printf '%s\n' 1 1 target.example no) 
   exit 1
 fi
 grep -Fq '已取消操作' "$fixture/change-output"
-grep -Fq 'https://target.example' "$fixture/change-output"
+grep -Fq '源站域名：https://source.example' "$fixture/change-output"
+grep -Fq '目标域名：https://target.example' "$fixture/change-output"
+! grep -Fq '目标网址：' "$fixture/change-output"
 grep -Fq '目标服务器：@target-vps 2c4g' "$fixture/change-output"
 ! grep -Fq 'machine:0123456789abcdef' "$fixture/change-output"
 ! grep -Fq 'fixture-user' "$fixture/change-output"
@@ -223,7 +227,7 @@ if ! migration_preflight keep-domain < <(printf '%s\n' "$same_choice" 1 same.exa
   cat "$fixture/keep-output" >&2
   exit 1
 fi
-if ! grep -Fq '源站域名：same.example' "$fixture/keep-output" || ! grep -Fq '目标域名：same.example' "$fixture/keep-output" || ! grep -Fq 'http://same.example' "$fixture/keep-output"; then
+if ! grep -Fq '源站域名：same.example' "$fixture/keep-output" || ! grep -Fq '目标域名：http://same.example' "$fixture/keep-output" || grep -Fq '目标网址：' "$fixture/keep-output"; then
   cat "$fixture/keep-output" >&2
   exit 1
 fi

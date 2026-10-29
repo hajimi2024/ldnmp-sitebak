@@ -55,9 +55,9 @@ stamp=20260912_100100
 restore_site "$backup" < <(printf 'yes\ny\n') > "$fixture/restore.log" 2>&1
 assert_state A
 grep -Fq '操作类型：站点还原' "$fixture/restore.log"
-grep -Fq '源站域名：example.com' "$fixture/restore.log"
-grep -Fq '目标域名：example.com' "$fixture/restore.log"
-grep -Fq '目标网址：https://example.com' "$fixture/restore.log"
+grep -Fq '源站域名：https://example.com' "$fixture/restore.log"
+grep -Fq '目标域名：https://example.com' "$fixture/restore.log"
+! grep -Fq '目标网址：' "$fixture/restore.log"
 grep -Fq '目标 WordPress Root：' "$fixture/restore.log"
 grep -Fq '目标数据库：fixture_db' "$fixture/restore.log"
 grep -Fq '🚨 警告：即将写入目标网站文件及数据库。' "$fixture/restore.log"

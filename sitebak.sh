@@ -2,7 +2,7 @@
 
 set -Eeuo pipefail
 
-VERSION="0.7.17"
+VERSION="0.7.18"
 APP_NAME="LDNMP 单站备份恢复工具"
 
 WEB_ROOT="${SITEBAK_WEB_ROOT:-/home/web}"
@@ -17,6 +17,7 @@ MIGRATION_TMP_ROOT="${SITEBAK_MIGRATION_TMP_ROOT:-/tmp}"
 MIGRATION_LOG_FILE=''
 MIGRATION_LOG_STAMP=''
 MIGRATION_LOG_OPERATION=''
+MIGRATION_SOURCE_URL=''
 WPCLI_IMAGE='wordpress:cli-2.12.0-php8.3@sha256:2b5e9d4d3e51909dca1aaa4732e9f5e5bf0377c2114dbd8ff39f060bff202586'
 WPCLI_NETWORK='web_default'
 WPCLI_WORKDIR='/var/www/html'
@@ -1417,7 +1418,7 @@ extract_safe_tar() {
 
 inspect_migration_archive() {
   local archive="$1" package_dir="$2" source_site_dir="$3"
-  local manifest tool archive_type version created_at source_site_dir_record source_db_host filename_domain db_name wp_config source_db_name component count payload
+  local manifest tool archive_type version created_at source_site_dir_record source_db_host filename_domain db_name wp_config source_db_name component count payload source_scheme
   [[ -f "$archive" ]] || { err "备份文件不存在：$archive"; return 1; }
   [[ "$(archive_kind "$archive" || true)" == backup ]] || { err '站点导入只接受普通备份。'; return 1; }
 
@@ -1434,6 +1435,7 @@ inspect_migration_archive() {
   archive_type="$(manifest_string_once "$manifest" archive_type)" || return 1
   created_at="$(manifest_string_once "$manifest" created_at)" || return 1
   MIGRATION_SOURCE_DOMAIN="$(manifest_string_once "$manifest" domain)" || return 1
+  MIGRATION_SOURCE_URL="$MIGRATION_SOURCE_DOMAIN"
   source_site_dir_record="$(manifest_string_once "$manifest" site_dir)" || return 1
   db_name="$(manifest_string_once "$manifest" db_name)" || return 1
   source_db_host="$(manifest_string_once "$manifest" db_host)" || return 1
@@ -1463,6 +1465,12 @@ inspect_migration_archive() {
     fi
     [[ ! -f "$payload" ]] || tar -tzf "$payload" >/dev/null || { err "备份中的 $component 载荷无法读取。"; return 1; }
   done
+
+  if [[ -f "$package_dir/nginx/nginx-files.tar.gz" ]]; then
+    extract_safe_tar "$package_dir/nginx/nginx-files.tar.gz" "$package_dir/source-nginx" '源站 Nginx 配置' no || return 1
+    source_scheme="$(detect_archived_source_scheme "$package_dir/source-nginx" "$MIGRATION_SOURCE_DOMAIN" || true)"
+    [[ -z "$source_scheme" ]] || MIGRATION_SOURCE_URL="${source_scheme}://${MIGRATION_SOURCE_DOMAIN}"
+  fi
 
   migration_progress '正在解压并检查站点文件，请耐心等待。'
   extract_safe_tar "$package_dir/files/site-files.tar.gz" "$source_site_dir" '站点文件包' yes || return 1
@@ -1693,6 +1701,30 @@ detect_target_scheme() {
   return 1
 }
 
+detect_archived_source_scheme() {
+  local root="$1" domain="$2" file statuses block_status
+  local has_https=0 has_http=0 has_incomplete=0
+  while IFS= read -r -d '' file; do
+    grep -qE "(^|[[:space:]])${domain//./\\.}([[:space:];]|$)" "$file" 2>/dev/null || continue
+    statuses="$(classify_nginx_domain_blocks "$file" "$domain" 2>/dev/null)" || return 1
+    while IFS= read -r block_status; do
+      case "$block_status" in
+        HTTPS) has_https=1 ;;
+        HTTP) has_http=1 ;;
+        TLS_INCOMPLETE) has_incomplete=1 ;;
+      esac
+    done <<< "$statuses"
+  done < <(find "$root" -type f -print0)
+  ((has_incomplete == 0)) || return 1
+  if ((has_https)); then
+    printf 'https'
+  elif ((has_http)); then
+    printf 'http'
+  else
+    return 1
+  fi
+}
+
 get_target_server_identity() {
   local host machine_id_file='' machine_fingerprint
   host="$(hostname -f 2>/dev/null || hostname 2>/dev/null || true)"
@@ -1838,15 +1870,14 @@ operation_type_label() {
 }
 
 confirm_target_operation() {
-  local operation="$1" source_domain="$2" target_domain="$3" target_url="$4" server_identity="$5" server_username="$6"
-  local target_root="$7" database_name="$8" archive="$9" confirm server_display
+  local operation="$1" source_domain="$2" source_url="$3" target_domain="$4" target_url="$5" server_identity="$6" server_username="$7"
+  local target_root="$8" database_name="$9" archive="${10}" confirm server_display
   server_display="$(get_target_server_display)" || return 1
   header
   printf '%s即将执行站点操作，请核对：%s\n\n' "$BOLD" "$RESET"
   printf '%s操作类型：%s%s%s\n' "$NUMBER" "$BLUE" "$(operation_type_label "$operation")" "$RESET"
-  printf '%s源站域名：%s%s%s\n' "$NUMBER" "$BLUE" "$source_domain" "$RESET"
-  printf '%s目标域名：%s%s%s\n' "$NUMBER" "$BLUE" "$target_domain" "$RESET"
-  printf '%s目标网址：%s%s%s\n' "$NUMBER" "$BLUE" "$target_url" "$RESET"
+  printf '%s源站域名：%s%s%s\n' "$NUMBER" "$BLUE" "$source_url" "$RESET"
+  printf '%s目标域名：%s%s%s\n' "$NUMBER" "$BLUE" "$target_url" "$RESET"
   printf '%s目标服务器：%s%s%s\n' "$NUMBER" "$PURPLE" "$server_display" "$RESET"
   printf '%s目标 WordPress Root：%s%s%s\n' "$NUMBER" "$BLUE" "$target_root" "$RESET"
   printf '%s目标数据库：%s%s%s\n' "$NUMBER" "$BLUE" "$database_name" "$RESET"
@@ -2354,7 +2385,7 @@ restore_site() (
     server_username="$(get_target_server_username)" || return 1
   fi
 
-  confirm_target_operation "${expected_type:+snapshot-}restore" "$domain" "$domain" "$target_url" "$server_identity" "$server_username" "$target_wp_root" "$db_name" "$archive" || return 1
+  confirm_target_operation "${expected_type:+snapshot-}restore" "$domain" "$target_url" "$domain" "$target_url" "$server_identity" "$server_username" "$target_wp_root" "$db_name" "$archive" || return 1
 
   [[ "$(sha256sum "$archive" | awk '{print $1}')" == "$archive_sha256" ]] || { err '确认后备份文件发生变化，已停止恢复。'; return 1; }
   if [[ "$target_exists" == yes ]]; then
@@ -2774,7 +2805,7 @@ migration_preflight() (
   migration_log INFO "目标数据库连接与空库检查通过；目标数据库=$MIGRATION_TARGET_DB_NAME"
   migration_log INFO "目标预检通过；服务器=$MIGRATION_TARGET_SERVER；用户=$MIGRATION_TARGET_SERVER_USERNAME；目标域名=$target_domain；目标协议=$target_scheme；目标属主=$target_owner；数据库=$MIGRATION_TARGET_DB_NAME；目标身份=$locked_identity"
   migration_progress_break_line
-  confirm_target_operation "$mode" "$MIGRATION_SOURCE_DOMAIN" "$target_domain" "$target_url" "$MIGRATION_TARGET_SERVER" "$MIGRATION_TARGET_SERVER_USERNAME" "$target_wp_root" "$MIGRATION_TARGET_DB_NAME" "$archive" || {
+  confirm_target_operation "$mode" "$MIGRATION_SOURCE_DOMAIN" "$MIGRATION_SOURCE_URL" "$target_domain" "$target_url" "$MIGRATION_TARGET_SERVER" "$MIGRATION_TARGET_SERVER_USERNAME" "$target_wp_root" "$MIGRATION_TARGET_DB_NAME" "$archive" || {
     migration_log INFO '用户取消站点导入，未写入目标网站或数据库。'
     return 0
   }
