@@ -2,7 +2,7 @@
 
 set -Eeuo pipefail
 
-VERSION="0.7.5"
+VERSION="0.7.6"
 APP_NAME="LDNMP 单站备份恢复工具"
 
 WEB_ROOT="${SITEBAK_WEB_ROOT:-/home/web}"
@@ -632,7 +632,9 @@ select_domain() {
   while true; do
     header >&2
     if [[ -n "$intro" ]]; then
+      printf '\n' >&2
       printf '%s%s%s\n' "$BOLD" "$intro" "$RESET" >&2
+      printf '\n' >&2
       menu_separator >&2
     fi
     printf '%s%s：%s\n' "$BOLD" "$title" "$RESET" >&2

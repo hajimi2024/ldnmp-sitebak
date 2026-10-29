@@ -135,8 +135,10 @@ for name, title, body in [
 restore_lines = read_plain('restore-domain-selection').splitlines()
 intro_index = restore_lines.index('适用于在当前服务器恢复已有站点的普通备份。')
 title_index = restore_lines.index('请选择要恢复的站点：')
-assert restore_lines[intro_index + 1] == '-' * 24, restore_lines
-assert title_index == intro_index + 2, restore_lines
+assert restore_lines[intro_index - 1] == '', restore_lines
+assert restore_lines[intro_index + 1] == '', restore_lines
+assert restore_lines[intro_index + 2] == '-' * 24, restore_lines
+assert title_index == intro_index + 3, restore_lines
 
 backup_selection = read_plain('backup-selection')
 assert ('example.com 可用普通备份：\n' + '-' * 24 + '\n' in backup_selection), backup_selection
