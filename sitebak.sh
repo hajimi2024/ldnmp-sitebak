@@ -2,7 +2,7 @@
 
 set -Eeuo pipefail
 
-VERSION="0.7.6"
+VERSION="0.7.7"
 APP_NAME="LDNMP 单站备份恢复工具"
 
 WEB_ROOT="${SITEBAK_WEB_ROOT:-/home/web}"
@@ -2350,29 +2350,27 @@ reload_services() {
 
 show_sites() {
   header
-  local sites=() empty_sites=() domain status unknown_count=0
+  local sites=() domain status unknown_count=0 suffix i
   mapfile -t sites < <(list_sites_by_creation_array)
-  for domain in "${sites[@]}"; do
-    if site_database_is_empty "$domain" >/dev/null 2>&1; then
-      empty_sites+=("$domain")
-    else
-      status=$?
-      ((status == 2)) && ((unknown_count += 1))
-    fi
-  done
-  if ((${#empty_sites[@]} == 0)); then
-    warn "未找到可确认的空 WordPress 站点。"
+  if ((${#sites[@]} == 0)); then
+    warn "未在站点目录中找到 WordPress 站点。"
     printf '%s检查路径：域名/wp-config.php 或 域名/wordpress/wp-config.php%s\n' "$BLUE" "$RESET"
-    printf '%s只有数据库为零张表的站点会显示；非空或无法检查的站点已隐藏。%s\n' "$BLUE" "$RESET"
   else
-    printf '%s当前空 WordPress 站点：%s\n\n' "$BOLD" "$RESET"
-    local i
-    for i in "${!empty_sites[@]}"; do
-      printf '%s%d.%s %s%s（空站点）%s\n' "$NUMBER" "$((i + 1))" "$BLUE" "${empty_sites[$i]}" "$GREEN" "$RESET"
+    printf '%s当前 WordPress 站点：%s\n\n' "$BOLD" "$RESET"
+    for i in "${!sites[@]}"; do
+      domain="${sites[$i]}"
+      suffix=''
+      if site_database_is_empty "$domain" >/dev/null 2>&1; then
+        suffix="${GREEN}（空站点）${RESET}"
+      else
+        status=$?
+        ((status == 2)) && ((unknown_count += 1))
+      fi
+      printf '%s%d.%s %s%s%s\n' "$NUMBER" "$((i + 1))" "$BLUE" "$domain" "$suffix" "$RESET"
     done
   fi
   if ((unknown_count > 0)); then
-    warn "有 $unknown_count 个站点无法完成数据库检查，已隐藏。"
+    warn "有 $unknown_count 个站点无法完成数据库检查，已显示但未标注为空站点。"
   fi
 }
 

@@ -48,7 +48,7 @@ for columns, expected in [(80, banner + ['-' * 38, '        单站备份恢复�
               for line in lines[:len(expected)]]
     assert max(widths) <= columns, widths
 PY
-# “列出 WordPress 站点”只展示零表空站点，并按创建时间从新到旧排列。
+# “列出 WordPress 站点”展示全部站点；零表站点在域名后标注空站点，并按创建时间从新到旧排列。
 SITE_ROOT="$tmp/list-sites"
 mkdir -p "$SITE_ROOT/older-empty.example" "$SITE_ROOT/nonempty.example"
 write_fixture_config() {
@@ -67,6 +67,6 @@ run_mysql() {
 }
 show_sites > "$tmp/empty-sites"
 grep -Fq '1. newer-empty.example（空站点）' "$tmp/empty-sites"
-grep -Fq '2. older-empty.example（空站点）' "$tmp/empty-sites"
-! grep -Fq 'nonempty.example' "$tmp/empty-sites"
+grep -Fq '2. nonempty.example' "$tmp/empty-sites"
+grep -Fq '3. older-empty.example（空站点）' "$tmp/empty-sites"
 printf 'PASS: discovery, empty state, DB config, menu output, ambiguous config and approved Banner\n'
