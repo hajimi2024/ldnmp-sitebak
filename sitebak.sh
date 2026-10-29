@@ -2,7 +2,7 @@
 
 set -Eeuo pipefail
 
-VERSION="0.7.3"
+VERSION="0.7.4"
 APP_NAME="LDNMP 单站备份恢复工具"
 
 WEB_ROOT="${SITEBAK_WEB_ROOT:-/home/web}"
@@ -583,6 +583,45 @@ list_sites_array() {
   if ((${#sites[@]} > 0)); then
     printf "%s\n" "${sites[@]}"
   fi
+}
+
+site_creation_timestamp() {
+  local dir="$1" created modified
+  created="$(stat -c %W -- "$dir" 2>/dev/null || true)"
+  if [[ "$created" =~ ^[0-9]+$ ]] && ((created > 0)); then
+    printf '%s' "$created"
+    return 0
+  fi
+  modified="$(stat -c %Y -- "$dir" 2>/dev/null || true)"
+  [[ "$modified" =~ ^[0-9]+$ ]] || modified=0
+  printf '%s' "$modified"
+}
+
+list_sites_by_creation_array() {
+  local records=() dir name timestamp
+  if [[ -d "$SITE_ROOT" ]]; then
+    while IFS= read -r -d '' dir; do
+      name="$(basename "$dir")"
+      if find_wp_config "$dir" >/dev/null; then
+        timestamp="$(site_creation_timestamp "$dir")"
+        records+=("$timestamp"$'\t'"$name")
+      fi
+    done < <(find "$SITE_ROOT" -mindepth 1 -maxdepth 1 -type d -print0 2>/dev/null)
+  fi
+  if ((${#records[@]} > 0)); then
+    printf '%s\n' "${records[@]}" |
+      LC_ALL=C sort -t $'\t' -k1,1nr -k2,2 |
+      cut -f2-
+  fi
+}
+
+site_database_is_empty() {
+  local domain="$1" wp_config tables
+  wp_config="$(find_wp_config "$(site_path "$domain")")" || return 2
+  read_db_config_file "$wp_config" || return 2
+  prepare_db_client mysql >/dev/null 2>&1 || return 2
+  tables="$(run_mysql --batch --skip-column-names -e 'SHOW TABLES' "$DB_NAME" 2>/dev/null)" || return 2
+  [[ -z "${tables//[[:space:]]/}" ]]
 }
 
 select_domain() {
@@ -2262,18 +2301,29 @@ reload_services() {
 
 show_sites() {
   header
-  local sites=()
-  mapfile -t sites < <(list_sites_array)
-  if ((${#sites[@]} == 0)); then
-    warn "未在 $SITE_ROOT 下找到 WordPress 站点。"
+  local sites=() empty_sites=() domain status unknown_count=0
+  mapfile -t sites < <(list_sites_by_creation_array)
+  for domain in "${sites[@]}"; do
+    if site_database_is_empty "$domain" >/dev/null 2>&1; then
+      empty_sites+=("$domain")
+    else
+      status=$?
+      ((status == 2)) && ((unknown_count += 1))
+    fi
+  done
+  if ((${#empty_sites[@]} == 0)); then
+    warn "未找到可确认的空 WordPress 站点。"
     printf '%s检查路径：域名/wp-config.php 或 域名/wordpress/wp-config.php%s\n' "$BLUE" "$RESET"
-    printf '%s同时存在两份配置的目录不会自动选择。%s\n' "$BLUE" "$RESET"
+    printf '%s只有数据库为零张表的站点会显示；非空或无法检查的站点已隐藏。%s\n' "$BLUE" "$RESET"
   else
-    printf '%s当前 WordPress 站点：%s\n\n' "$BOLD" "$RESET"
+    printf '%s当前空 WordPress 站点：%s\n\n' "$BOLD" "$RESET"
     local i
-    for i in "${!sites[@]}"; do
-      printf '%s%d.%s %s%s\n' "$NUMBER" "$((i + 1))" "$BLUE" "${sites[$i]}" "$RESET"
+    for i in "${!empty_sites[@]}"; do
+      printf '%s%d.%s %s%s（空站点）%s\n' "$NUMBER" "$((i + 1))" "$BLUE" "${empty_sites[$i]}" "$GREEN" "$RESET"
     done
+  fi
+  if ((unknown_count > 0)); then
+    warn "有 $unknown_count 个站点无法完成数据库检查，已隐藏。"
   fi
 }
 

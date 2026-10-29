@@ -48,4 +48,25 @@ for columns, expected in [(80, banner + ['-' * 38, '        单站备份恢复�
               for line in lines[:len(expected)]]
     assert max(widths) <= columns, widths
 PY
+# “列出 WordPress 站点”只展示零表空站点，并按创建时间从新到旧排列。
+SITE_ROOT="$tmp/list-sites"
+mkdir -p "$SITE_ROOT/older-empty.example" "$SITE_ROOT/nonempty.example"
+write_fixture_config() {
+  printf '%s\n' '<?php' "define('DB_NAME', '$2');" "define('DB_USER', 'fixture_user');" "define('DB_PASSWORD', 'fixture_password');" "define('DB_HOST', 'mysql');" > "$SITE_ROOT/$1/wp-config.php"
+}
+write_fixture_config older-empty.example empty_db
+write_fixture_config nonempty.example nonempty_db
+sleep 1
+mkdir -p "$SITE_ROOT/newer-empty.example"
+write_fixture_config newer-empty.example empty_db
+prepare_db_client() { :; }
+run_mysql() {
+  if [[ " $* " == *' nonempty_db '* ]]; then
+    printf '%s\n' wp_options
+  fi
+}
+show_sites > "$tmp/empty-sites"
+grep -Fq '1. newer-empty.example（空站点）' "$tmp/empty-sites"
+grep -Fq '2. older-empty.example（空站点）' "$tmp/empty-sites"
+! grep -Fq 'nonempty.example' "$tmp/empty-sites"
 printf 'PASS: discovery, empty state, DB config, menu output, ambiguous config and approved Banner\n'
