@@ -2,7 +2,7 @@
 
 set -Eeuo pipefail
 
-VERSION="0.7.9"
+VERSION="0.7.10"
 APP_NAME="LDNMP 单站备份恢复工具"
 
 WEB_ROOT="${SITEBAK_WEB_ROOT:-/home/web}"
@@ -34,6 +34,8 @@ MIGRATION_STAGE_INDEX=0
 MIGRATION_STAGE_PERCENT=0
 MIGRATION_STAGE_LINE_OPEN=no
 DB_CLIENT_ANNOUNCED=''
+UI_PENDING_PROMPT=''
+UI_PENDING_INPUT_COLOR=''
 
 NGINX_CONF_DIRS=(
   "$WEB_ROOT/conf.d"
@@ -92,8 +94,22 @@ err() {
   migration_progress_break_line
   printf '%s[ERROR] %s%s\n' "$RED" "$*" "$RESET" >&2
 }
-ui_prompt() { printf '%s%s%s' "$BOLD" "$1" "$NUMBER"; }
-ui_confirm_prompt() { printf '%s%s%s' "$BOLD" "$1" "$GREEN"; }
+ui_prompt() {
+  UI_PENDING_PROMPT="$1"
+  UI_PENDING_INPUT_COLOR="$NUMBER"
+  # 交互终端把完整提示交给 Readline，让它知道提示文本的实际宽度；
+  # 否则中文提示后的退格会把已经显示的提示一起重绘掉。
+  if [[ ! -t 0 ]]; then
+    printf '%s%s%s' "$BOLD" "$1" "$NUMBER"
+  fi
+}
+ui_confirm_prompt() {
+  UI_PENDING_PROMPT="$1"
+  UI_PENDING_INPUT_COLOR="$GREEN"
+  if [[ ! -t 0 ]]; then
+    printf '%s%s%s' "$BOLD" "$1" "$GREEN"
+  fi
+}
 
 sanitize_migration_log_text() {
   sed -E \
@@ -306,9 +322,20 @@ show_recent_migration_log() {
 
 ui_read() {
   local variable="$1" output_fd="${2:-1}" status
-  # 交互终端使用 Readline 处理 UTF-8 宽字符，避免中文退格时覆盖提示文本。
+  local prompt="${UI_PENDING_PROMPT:-}" input_color="${UI_PENDING_INPUT_COLOR:-$NUMBER}"
+  UI_PENDING_PROMPT=''
+  UI_PENDING_INPUT_COLOR=''
+  # 交互终端使用 Readline 处理 UTF-8 宽字符，并把提示作为 -p 参数传入；
+  # 这样 Readline 能正确计算中文提示宽度，退格只会删除用户输入。
   if [[ -t 0 ]]; then
-    if IFS= read -r -e "$variable"; then
+    local readline_prompt
+    if [[ -n "$RESET" ]]; then
+      # \001/\002 标记 ANSI 控制序列为不可见字符，避免光标定位偏移。
+      readline_prompt=$'\001'"$BOLD"$'\002'"$prompt"$'\001'"$input_color"$'\002'
+    else
+      readline_prompt="$prompt"
+    fi
+    if IFS= read -r -e -p "$readline_prompt" "$variable"; then
       status=0
     else
       status=$?
