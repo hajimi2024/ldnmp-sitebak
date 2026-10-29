@@ -15,9 +15,27 @@ source "$1"
 ui_prompt '请输入你的选择：'
 ui_read value
 printf '\nVALUE:%s\n' "$value"
+ui_prompt '请输入编号，或直接输入域名：'
+ui_read domain
+printf '\nDOMAIN:%s\n' "$domain"
+ui_prompt '请输入目标站点编号或域名：'
+ui_read target
+printf '\nTARGET:%s\n' "$target"
+ui_prompt '请选择要查看的文件：'
+ui_read file
+printf '\nFILE:%s\n' "$file"
+ui_prompt '恢复前是否创建完整快照（包含数据库）？[Y/n，0 返回] '
+ui_read snapshot
+printf '\nSNAPSHOT:%s\n' "$snapshot"
 ui_confirm_prompt '请输入 yes 确认：'
 ui_read confirmation
 printf '\nCONFIRM:%s\n' "$confirmation"
+ui_confirm_prompt '请输入 yes 确认删除：'
+ui_read deletion
+printf '\nDELETION:%s\n' "$deletion"
+ui_prompt $'\n已选择目标站点 < target.example > 请输入完整域名确认：'
+ui_read target_confirmation
+printf '\nTARGET_CONFIRM:%s\n' "$target_confirmation"
 '''
 env = os.environ.copy()
 env.pop('NO_COLOR', None)
@@ -34,10 +52,16 @@ os.close(slave)
 chunks = []
 try:
     time.sleep(0.1)
-    # 删除两个字符后提交，验证 Readline 只重绘输入区，不擦除中文提示。
-    os.write(master, b'abc\x7f\x7f\n')
+    # 每个输入都先输入内容再退格，验证 Readline 只重绘输入区，不擦除中文提示。
+    os.write(master, 'abc\x7f\x7f\n'.encode())
+    os.write(master, 'rovetree.com\x7f\n'.encode())
+    os.write(master, '2\x7f\n'.encode())
+    os.write(master, 'backup.tar.gz\x7f\x7f\n'.encode())
+    os.write(master, 'Y\x7f' .encode() + b'n\n')
     time.sleep(0.1)
     os.write(master, b'yes\x7f\n')
+    os.write(master, b'yes\x7f\x7f\n')
+    os.write(master, 'target.example\x7f\n'.encode())
     while True:
         try:
             chunk = os.read(master, 65536)
@@ -53,9 +77,24 @@ finally:
 assert process.wait() == 0
 output = b''.join(chunks).decode(errors='replace')
 assert 'VALUE:a' in output, output
+assert 'DOMAIN:rovetree.co' in output, output
+assert 'TARGET:' in output, output
+assert 'FILE:backup.tar.' in output, output
+assert 'SNAPSHOT:n' in output, output
 assert 'CONFIRM:ye' in output, output
-assert output.count('请输入你的选择：') >= 1, output
-assert output.count('请输入 yes 确认：') >= 1, output
+assert 'DELETION:y' in output, output
+assert 'TARGET_CONFIRM:target.exampl' in output, output
+for prompt in [
+    '请输入你的选择：',
+    '请输入编号，或直接输入域名：',
+    '请输入目标站点编号或域名：',
+    '请选择要查看的文件：',
+    '恢复前是否创建完整快照（包含数据库）？[Y/n，0 返回] ',
+    '请输入 yes 确认：',
+    '请输入 yes 确认删除：',
+    '已选择目标站点 < target.example > 请输入完整域名确认：',
+]:
+    assert prompt in output, (prompt, output)
 PY
 
-printf 'PASS: Readline keeps every colored prompt intact while editing and deleting input\n'
+printf 'PASS: Readline keeps all menu, domain, file, snapshot, confirmation and target prompts intact while editing input\n'
