@@ -165,6 +165,7 @@ grep -Fq '✅ 站点 new.example 已成功导入。' "$fixture/change-output"
 grep -Fq '🚨 警告：即将为 new.example 注入文件 & 数据库。' "$fixture/change-output"
 grep -Fq '✅ 已验证目标站点 < new.example > 为空站点，允许继续导入。' "$fixture/change-output"
 grep -Fq 'WordPress 后台：http://new.example/wp-admin' "$fixture/change-output"
+grep -Fq 'WordPress 前台：http://new.example' "$fixture/change-output"
 ! grep -Fq '本阶段未修改 Nginx、SSL' "$fixture/change-output"
 grep -Fq '适用于跨服务器导入并更换域名' "$fixture/change-output"
 assert_progress_output "$fixture/change-output" yes
@@ -198,6 +199,7 @@ fi
 grep -Fq '输入错误，请输入完整小写 yes' "$fixture/confirm-retry-output"
 grep -Fq '✅ 站点 new.example 已成功导入。' "$fixture/confirm-retry-output"
 grep -Fq 'WordPress 后台：http://new.example/wp-admin' "$fixture/confirm-retry-output"
+grep -Fq 'WordPress 前台：http://new.example' "$fixture/confirm-retry-output"
 
 # SQL that can switch or create databases is rejected before confirmation and writes.
 printf 'USE another_database;\n' | gzip > "$fixture/forbidden.sql.gz"
