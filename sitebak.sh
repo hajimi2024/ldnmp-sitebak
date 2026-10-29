@@ -2,7 +2,7 @@
 
 set -Eeuo pipefail
 
-VERSION="0.7.8"
+VERSION="0.7.9"
 APP_NAME="LDNMP 单站备份恢复工具"
 
 WEB_ROOT="${SITEBAK_WEB_ROOT:-/home/web}"
