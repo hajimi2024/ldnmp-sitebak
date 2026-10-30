@@ -110,4 +110,57 @@ assert len(stage_lines) == 1, stage_lines
 assert '100% 阶段8/8：站点配置与目标网址校验完成' in stage_lines[0], stage_lines
 PY
 
+python3 - "$(dirname "$0")/../sitebak.sh" <<'PY'
+import os
+import pty
+import re
+import subprocess
+import sys
+import time
+
+source = sys.argv[1]
+script = r'''
+source "$1"
+MIGRATION_LOG_FILE=''
+MIGRATION_STAGE_INDEX=5
+MIGRATION_STAGE_HISTORY=(
+  '1|备份包检查完成'
+  '2|目标站点与空数据库验证完成'
+  '3|WordPress 文件暂存完成'
+  '4|待导入 SQL 安全检查完成'
+  '5|WP-CLI 环境检查完成'
+)
+get_target_server_display() { printf '@test-vps 2c4g'; }
+get_public_ipv4() { printf '203.0.113.10'; }
+confirm_target_operation change-domain old.example https://old.example new.example https://new.example server root /target/root target_db /backup.tar.gz
+'''
+env = os.environ.copy()
+env.pop('NO_COLOR', None)
+env.update(TERM='xterm-256color', COLUMNS='100')
+master, slave = pty.openpty()
+process = subprocess.Popen(['bash', '-c', script, 'confirmation-layout', source],
+                           env=env, stdin=slave, stdout=slave, stderr=slave)
+os.close(slave)
+os.write(master, b'yes\n')
+chunks = []
+try:
+    while True:
+        try:
+            chunk = os.read(master, 65536)
+        except OSError:
+            break
+        if not chunk:
+            break
+        chunks.append(chunk)
+finally:
+    os.close(master)
+assert process.wait() == 0
+output = b''.join(chunks).decode()
+plain = re.sub(r'\x1b\[[0-9;]*[mK]', '', output).replace('\r', '')
+header = plain.index('即将执行站点操作，请核对：')
+stage_one = plain.index('100% 阶段1/8：备份包检查完成')
+stage_five = plain.index('100% 阶段5/8：WP-CLI 环境检查完成')
+assert header < stage_one < stage_five, plain
+PY
+
 printf 'PASS: monotonic migration progress, adaptive width, colors, success and failure boundaries\n'

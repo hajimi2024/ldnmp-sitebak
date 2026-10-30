@@ -2,7 +2,7 @@
 
 set -Eeuo pipefail
 
-VERSION="0.7.41"
+VERSION="0.7.42"
 APP_NAME="LDNMP 单站备份恢复工具"
 
 WEB_ROOT="${SITEBAK_WEB_ROOT:-/home/web}"
@@ -30,6 +30,7 @@ MIGRATION_STAGE_ACTIVE=no
 MIGRATION_STAGE_INDEX=0
 MIGRATION_STAGE_PERCENT=0
 MIGRATION_STAGE_LINE_OPEN=no
+MIGRATION_STAGE_HISTORY=()
 declare -a MIGRATION_DEFERRED_NOTICES=()
 DB_CLIENT_ANNOUNCED=''
 UI_PENDING_PROMPT=''
@@ -314,8 +315,31 @@ migration_stage_complete() {
   fi
   MIGRATION_PROGRESS_LINE_OPEN=no
   MIGRATION_STAGE_LINE_OPEN=no
+  MIGRATION_STAGE_HISTORY+=("${MIGRATION_STAGE_INDEX}|${message}")
   [[ -z "$MIGRATION_LOG_FILE" ]] || migration_log INFO "阶段${MIGRATION_STAGE_INDEX}/8 完成：$message"
   MIGRATION_STAGE_ACTIVE=no
+}
+
+# 在最终确认单之后重放已经完成的预检阶段，使确认单成为执行页面的固定 Header。
+# 交互终端只在确认单出现前受控重绘一次；非交互输出保持普通逐行顺序。
+migration_render_stage_history() {
+  local entry stage message
+  for entry in "${MIGRATION_STAGE_HISTORY[@]}"; do
+    stage="${entry%%|*}"
+    message="${entry#*|}"
+    migration_progress_render 100 "阶段${stage}/8：${message}"
+    if [[ -t 1 && ${TERM:-} != dumb ]]; then
+      printf '\n'
+      MIGRATION_PROGRESS_LINE_OPEN=no
+    fi
+  done
+}
+
+migration_prepare_confirmation_layout() {
+  migration_progress_break_line
+  if [[ -t 1 && ${TERM:-} != dumb ]]; then
+    clear_screen
+  fi
 }
 
 migration_defer_notice() {
@@ -1913,6 +1937,7 @@ confirm_keep_domain_dns() {
   if (( MIGRATION_STAGE_INDEX == 0 )); then
     header
   else
+    migration_prepare_confirmation_layout
     wide_separator
   fi
   printf '%s请将 %s< %s >%s 的 DNS 解析到当前服务器。%s\n\n' "$BOLD" "$CONFIRM_GREEN" "$domain" "$BOLD" "$RESET"
@@ -1922,7 +1947,12 @@ confirm_keep_domain_dns() {
     ui_confirm_prompt '若 DNS 解析完成，请输入 yes：'
     ui_read confirmation || return 1
     case "$confirmation" in
-      yes) return 0 ;;
+      yes)
+        if (( MIGRATION_STAGE_INDEX > 0 )) && [[ -t 1 && ${TERM:-} != dumb ]]; then
+          migration_render_stage_history
+        fi
+        return 0
+        ;;
       '') warn '已取消本次导入。'; return 1 ;;
       0) warn '已返回上一级。'; return 1 ;;
       *) warn '输入错误，请输入完整小写 yes；直接回车取消，或输入 0 返回上一级。' ;;
@@ -2148,6 +2178,7 @@ confirm_target_operation() {
   if (( MIGRATION_STAGE_INDEX == 0 )); then
     header
   else
+    migration_prepare_confirmation_layout
     wide_separator
   fi
   printf '%s即将执行站点操作，请核对：%s\n\n' "$BOLD" "$RESET"
@@ -2174,7 +2205,12 @@ confirm_target_operation() {
     ui_confirm_prompt '请输入 yes 确认：'
     ui_read confirm || { warn '已取消操作。'; return 1; }
     case "$confirm" in
-      yes) return 0 ;;
+      yes)
+        if (( MIGRATION_STAGE_INDEX > 0 )) && [[ -t 1 && ${TERM:-} != dumb ]]; then
+          migration_render_stage_history
+        fi
+        return 0
+        ;;
       '') warn '已取消操作。'; return 1 ;;
       0) warn '已返回上一级。'; return 1 ;;
       *) warn '输入错误，请输入完整小写 yes；直接回车取消，或输入 0 返回上一级。' ;;
@@ -2978,6 +3014,7 @@ migration_preflight() (
   }
   migration_log INFO "已选择普通备份：${archive##*/}"
   MIGRATION_STAGE_INDEX=0
+  MIGRATION_STAGE_HISTORY=()
   DB_CLIENT_ANNOUNCED=''
 
   if [[ "$mode" == change-domain ]]; then
