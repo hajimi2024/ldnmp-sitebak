@@ -88,7 +88,7 @@ for number in range(9):
 for label in ['版本：', '备份目录：', '快照目录：', '日志目录：', '备注：']:
     assert '\x1b[1;33m' + label + '\x1b[0;92m' in colored
 assert '\x1b[1;33m当前服务器：\x1b[1;35m' in colored
-for value in ['0.7.38', fixture + '/backups', '/home/sitebak-logs', 'snapshot']:
+for value in ['0.7.39', fixture + '/backups', '/home/sitebak-logs', 'snapshot']:
     assert '\x1b[0;92m' + value + '\x1b[0m' in colored
 assert '\x1b[0;92m' + fixture + '/html' + '\x1b[0m' not in colored
 assert '\x1b[1;35m@' in colored
@@ -119,7 +119,7 @@ assert ('\x1b[0;32m[OK] ✅ 已验证目标站点 \x1b[1;92m< new.example >'
 assert ('\x1b[1;96m请将 \x1b[1;92m< keep.example >\x1b[1;96m 的 DNS 解析到当前服务器。\x1b[0m'
         in colored)
 assert ('\x1b[1;33m当前服务器：\x1b[1;35m@test-vps 2c4g\x1b[0m  '
-        '\x1b[1;33mIPv4：\x1b[0;92m203.0.113.10\x1b[0m') in colored
+        '\x1b[1;33mIPv4：\x1b[1;35m203.0.113.10\x1b[0m') in colored
 assert '\x1b[1;96m若 DNS 解析完成，请输入 \x1b[1;92myes\x1b[1;96m：\x1b[1;92m' in colored
 assert run(terminal=True, NO_COLOR='1') == plain
 assert run(terminal=True, TERM='dumb') == plain

@@ -2,7 +2,7 @@
 
 set -Eeuo pipefail
 
-VERSION="0.7.38"
+VERSION="0.7.39"
 APP_NAME="LDNMP 单站备份恢复工具"
 
 WEB_ROOT="${SITEBAK_WEB_ROOT:-/home/web}"
@@ -555,7 +555,7 @@ EOF
   printf '%s快照目录：%s%s%s  -  %s备注：%ssnapshot%s\n' "$NUMBER" "$LIGHT_GREEN" "$BACKUP_DIR" "$RESET" "$NUMBER" "$LIGHT_GREEN" "$RESET"
   printf '%s日志目录：%s%s%s\n' "$NUMBER" "$LIGHT_GREEN" "$MIGRATION_LOG_DIR" "$RESET"
   if [[ -n "$homepage_ipv4" ]]; then
-    printf '%s当前服务器：%s%s%s  %sIPv4：%s%s%s\n' "$NUMBER" "$PURPLE" "$(get_current_server_label)" "$RESET" "$NUMBER" "$LIGHT_GREEN" "$homepage_ipv4" "$RESET"
+    printf '%s当前服务器：%s%s%s  %sIPv4：%s%s%s\n' "$NUMBER" "$PURPLE" "$(get_current_server_label)" "$RESET" "$NUMBER" "$PURPLE" "$homepage_ipv4" "$RESET"
   else
     printf '%s当前服务器：%s%s%s\n' "$NUMBER" "$PURPLE" "$(get_current_server_label)" "$RESET"
   fi
@@ -1912,7 +1912,7 @@ confirm_keep_domain_dns() {
   server_label="$(get_current_server_label)" || return 1
   header
   printf '%s请将 %s< %s >%s 的 DNS 解析到当前服务器。%s\n\n' "$BOLD" "$CONFIRM_GREEN" "$domain" "$BOLD" "$RESET"
-  printf '%s当前服务器：%s%s%s  %sIPv4：%s%s%s\n\n' "$NUMBER" "$PURPLE" "$server_label" "$RESET" "$NUMBER" "$LIGHT_GREEN" "$public_ipv4" "$RESET"
+  printf '%s当前服务器：%s%s%s  %sIPv4：%s%s%s\n\n' "$NUMBER" "$PURPLE" "$server_label" "$RESET" "$NUMBER" "$PURPLE" "$public_ipv4" "$RESET"
   wide_separator
   while true; do
     ui_confirm_prompt '若 DNS 解析完成，请输入 yes：'
@@ -2147,7 +2147,7 @@ confirm_target_operation() {
   printf '%s源站域名：%s%s%s\n' "$NUMBER" "$BLUE" "$source_url" "$RESET"
   printf '%s目标域名：%s%s%s\n' "$NUMBER" "$BLUE" "$target_url" "$RESET"
   if [[ -n "$server_ipv4" ]]; then
-    printf '%s目标服务器：%s%s%s  %sIPv4：%s%s%s\n' "$NUMBER" "$PURPLE" "$server_display" "$RESET" "$NUMBER" "$LIGHT_GREEN" "$server_ipv4" "$RESET"
+    printf '%s目标服务器：%s%s%s  %sIPv4：%s%s%s\n' "$NUMBER" "$PURPLE" "$server_display" "$RESET" "$NUMBER" "$PURPLE" "$server_ipv4" "$RESET"
   else
     printf '%s目标服务器：%s%s%s\n' "$NUMBER" "$PURPLE" "$server_display" "$RESET"
   fi
