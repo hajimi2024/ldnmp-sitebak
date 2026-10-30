@@ -2,7 +2,7 @@
 
 set -Eeuo pipefail
 
-VERSION="0.7.32"
+VERSION="0.7.33"
 APP_NAME="LDNMP 单站备份恢复工具"
 
 WEB_ROOT="${SITEBAK_WEB_ROOT:-/home/web}"
@@ -1901,6 +1901,24 @@ confirm_keep_domain_dns() {
   done
 }
 
+verify_domain_dns_ipv4() {
+  local domain="$1" expected_ipv4="$2" resolved
+  if command -v getent >/dev/null 2>&1; then
+    resolved="$(getent ahostsv4 "$domain" 2>/dev/null | awk '{print $1}' | sort -u)"
+  elif command -v dig >/dev/null 2>&1; then
+    resolved="$(dig +short A "$domain" 2>/dev/null | awk '/^[0-9]+(\.[0-9]+){3}$/ {print}' | sort -u)"
+  else
+    err '缺少 DNS 查询工具（getent 或 dig），无法验证域名解析。'
+    return 1
+  fi
+  [[ -n "$resolved" ]] || { err "域名 $domain 没有解析到 IPv4 地址。"; return 1; }
+  if [[ "$resolved" != "$expected_ipv4" ]]; then
+    err "域名 $domain 的 IPv4 解析结果不是当前服务器：期望=$expected_ipv4；实际=$(tr '\n' ',' <<<"$resolved" | sed 's/,$//')。"
+    return 1
+  fi
+  migration_log INFO "DNS A 记录校验通过；域名=$domain；IPv4=$expected_ipv4"
+}
+
 kejilion_database_exists() {
   local domain="$1" database output query
   database="$(domain_to_db_name "$domain")"
@@ -2984,6 +3002,10 @@ migration_preflight() (
     confirm_keep_domain_dns "$target_domain" "$public_ipv4" || {
       migration_log INFO '用户未确认 DNS 已解析到当前服务器，未执行科技 Lion 建站。'
       return 0
+    }
+    verify_domain_dns_ipv4 "$target_domain" "$public_ipv4" || {
+      migration_log ERROR 'DNS A 记录未解析到当前服务器，未执行科技 Lion 建站。'
+      return 1
     }
     migration_log INFO "用户确认 DNS 已完成；域名=$target_domain；IPv4=$public_ipv4"
     migration_stage_begin '同域名目标站点创建与空数据库验证'

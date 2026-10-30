@@ -33,6 +33,7 @@ prepare_db_client() {
 get_target_server_identity() { printf '%s' "$fixture_server_identity"; }
 get_target_server_username() { printf '%s' fixture-user; }
 get_target_server_display() { printf '%s' '@target-vps 2c4g'; }
+verify_domain_dns_ipv4() { migration_log INFO "MOCK DNS A 记录校验通过；域名=$1；IPv4=$2"; }
 prepare_wp_cli_environment() { migration_log INFO 'MOCK WP-CLI 环境检查通过。'; }
 finalize_wordpress_migration() { migration_log INFO "MOCK WordPress 收尾：$1 / $2 / $3"; }
 run_mysqldump() { printf '%s\n' 'CREATE TABLE `wp_options` (`option_id` bigint);'; }

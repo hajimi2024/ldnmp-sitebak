@@ -30,6 +30,7 @@ prepare_db_client() {
 get_target_server_identity() { printf '%s' "$fixture_server_identity"; }
 get_target_server_username() { printf '%s' fixture-user; }
 get_target_server_display() { printf '%s' '@target-vps 2c4g'; }
+verify_domain_dns_ipv4() { migration_log INFO "MOCK DNS A 记录校验通过；域名=$1；IPv4=$2"; }
 prepare_wp_cli_environment() {
   ((wpcli_status == 0)) || return "$wpcli_status"
   wpcli_preflight_done=yes
