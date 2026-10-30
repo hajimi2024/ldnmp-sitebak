@@ -2,7 +2,7 @@
 
 set -Eeuo pipefail
 
-VERSION="0.7.39"
+VERSION="0.7.40"
 APP_NAME="LDNMP 单站备份恢复工具"
 
 WEB_ROOT="${SITEBAK_WEB_ROOT:-/home/web}"
@@ -1910,7 +1910,11 @@ get_public_ipv4() {
 confirm_keep_domain_dns() {
   local domain="$1" public_ipv4="$2" server_label confirmation
   server_label="$(get_current_server_label)" || return 1
-  header
+  if (( MIGRATION_STAGE_INDEX == 0 )); then
+    header
+  else
+    wide_separator
+  fi
   printf '%s请将 %s< %s >%s 的 DNS 解析到当前服务器。%s\n\n' "$BOLD" "$CONFIRM_GREEN" "$domain" "$BOLD" "$RESET"
   printf '%s当前服务器：%s%s%s  %sIPv4：%s%s%s\n\n' "$NUMBER" "$PURPLE" "$server_label" "$RESET" "$NUMBER" "$PURPLE" "$public_ipv4" "$RESET"
   wide_separator
@@ -2141,7 +2145,11 @@ confirm_target_operation() {
   local target_root="$8" database_name="$9" archive="${10}" confirm server_display server_ipv4
   server_display="$(get_target_server_display)" || return 1
   server_ipv4="$(get_public_ipv4 2>/dev/null || true)"
-  header
+  if (( MIGRATION_STAGE_INDEX == 0 )); then
+    header
+  else
+    wide_separator
+  fi
   printf '%s即将执行站点操作，请核对：%s\n\n' "$BOLD" "$RESET"
   printf '%s操作类型：%s%s%s\n' "$NUMBER" "$BLUE" "$(operation_type_label "$operation")" "$RESET"
   printf '%s源站域名：%s%s%s\n' "$NUMBER" "$BLUE" "$source_url" "$RESET"
