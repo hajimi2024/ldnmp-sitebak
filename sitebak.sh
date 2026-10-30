@@ -2,7 +2,7 @@
 
 set -Eeuo pipefail
 
-VERSION="0.7.23"
+VERSION="0.7.24"
 APP_NAME="LDNMP 单站备份恢复工具"
 
 WEB_ROOT="${SITEBAK_WEB_ROOT:-/home/web}"
@@ -748,7 +748,7 @@ select_domain() {
         domain="${sites[$i]}"
         suffix=''
         if site_database_is_empty "$domain" >/dev/null 2>&1; then
-          suffix="${GREEN}（空站点）${RESET}"
+          suffix="${CONFIRM_GREEN}（空站点）${RESET}"
         fi
         printf '%s%d.%s %s%s%s\n' "$NUMBER" "$((i + 1))" "$BLUE" "$domain" "$suffix" "$RESET" >&2
         ((i + 1 < ${#sites[@]})) && printf '\n' >&2
@@ -2516,7 +2516,7 @@ show_sites() {
       domain="${sites[$i]}"
       suffix=''
       if site_database_is_empty "$domain" >/dev/null 2>&1; then
-        suffix="${GREEN}（空站点）${RESET}"
+        suffix="${CONFIRM_GREEN}（空站点）${RESET}"
       else
         status=$?
         ((status == 2)) && ((unknown_count += 1))

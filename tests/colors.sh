@@ -33,6 +33,7 @@ printf '\n'
  ui_confirm_prompt '请输入 yes 确认删除：'
 ui_read prompt_confirm < <(printf 'yes\n')
 printf '\n'
+site_database_is_empty() { return 0; }
 site="$(select_domain < <(printf '1\n'))"
 printf '\nSELECTED_SITE:%s\n' "$site"
 archive="$(select_backup example.com backup < <(printf '1\n'))"
@@ -84,7 +85,7 @@ for number in range(9):
 for label in ['版本：', '备份目录：', '快照目录：', '日志目录：', '备注：']:
     assert '\x1b[1;33m' + label + '\x1b[0;92m' in colored
 assert '\x1b[1;33m当前服务器：\x1b[1;35m' in colored
-for value in ['0.7.23', fixture + '/backups', '/home/sitebak-logs', 'snapshot']:
+for value in ['0.7.24', fixture + '/backups', '/home/sitebak-logs', 'snapshot']:
     assert '\x1b[0;92m' + value + '\x1b[0m' in colored
 assert '\x1b[0;92m' + fixture + '/html' + '\x1b[0m' not in colored
 assert '\x1b[1;35m@' in colored
@@ -109,6 +110,7 @@ assert ('\x1b[0;31m🚨 警告：即将为 \x1b[1;92m< new.example >'
 assert ('\x1b[1;96m\n已选择目标站点 \x1b[1;92m< new.example >'
         '\x1b[1;96m 请输入完整域名确认：') in colored
 assert '\x1b[1;96m请输入目标站点编号或域名：\x1b[1;92m' in colored
+assert '\x1b[1;92m（空站点）\x1b[0m' in colored
 assert ('\x1b[0;32m[OK] ✅ 已验证目标站点 \x1b[1;92m< new.example >'
         '\x1b[0;32m 为空站点，允许继续导入。\x1b[0m') in colored
 assert run(terminal=True, NO_COLOR='1') == plain
