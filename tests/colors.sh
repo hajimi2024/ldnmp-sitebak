@@ -52,7 +52,8 @@ def run(terminal=False, **changes):
     env = os.environ.copy()
     env.pop('NO_COLOR', None)
     env.update(TERM='xterm-256color', COLUMNS='80',
-               SITEBAK_SITE_ROOT=fixture + '/html', SITEBAK_BACKUP_DIR=fixture + '/backups')
+               SITEBAK_SITE_ROOT=fixture + '/html', SITEBAK_BACKUP_DIR=fixture + '/backups',
+               SITEBAK_PUBLIC_IPV4='203.0.113.10')
     env.update(changes)
     command = ['bash', '-c', script, 'color-test', source]
     if not terminal:
