@@ -24,6 +24,7 @@ elementor_installed=yes
 wp_fail_pattern=''
 update_fail=''
 emit_known_warnings=''
+emit_unknown_stderr=''
 : > "$commands"
 
 revalidate_migration_target_scope() { :; }
@@ -36,6 +37,9 @@ run_wp_cli() {
     printf '%s\n' \
       'Warning: Skipping an uninitialized class "Elementor\\Core\\Logger\\Items\\Base", replacements might not be complete.' \
       'Warning: Skipping an uninitialized class "Astra_Builder_Header", replacements might not be complete.' >&2
+  fi
+  if [[ "$emit_unknown_stderr" == yes && " $* " == *' search-replace '* ]]; then
+    printf 'Unexpected WP-CLI stderr\n' >&2
   fi
   case " $* " in
     *' search-replace '*'--dry-run'*) : ;;
@@ -81,7 +85,7 @@ grep -Fq 'transient delete --all' "$commands"
 ! grep -Fq '请人工检查首页' "$fixture/change-output"
 grep -Fq 'GUID始终跳过' "$MIGRATION_LOG_FILE"
 
-# WP-CLI 已知序列化警告只在终端汇总，原始警告写入迁移日志。
+# WP-CLI 已知序列化提示完全忽略，不写终端和迁移日志。
 : > "$commands"
 emit_known_warnings=yes
 old_home='http://old.example'
@@ -91,10 +95,29 @@ mock_current_siteurl="$old_siteurl"
 elementor_installed=no
 migration_log_init warning-summary
 finalize_wordpress_migration change-domain old.example new.example https://new.example locked source_ > "$fixture/warning-output" 2>&1
-[[ $(grep -c '已发现 16 条已知兼容性提示' "$fixture/warning-output") == 1 ]]
-[[ $(grep -c 'WP-CLI 已知兼容性提示汇总' "$MIGRATION_LOG_FILE") == 1 ]]
-! grep -Fq 'WP-CLI 已知警告：' "$MIGRATION_LOG_FILE"
+! grep -Fq 'Skipping an uninitialized class' "$fixture/warning-output"
+! grep -Fq '兼容性提示' "$fixture/warning-output"
+! grep -Fq 'Skipping an uninitialized class' "$MIGRATION_LOG_FILE"
+! grep -Fq '兼容性提示' "$MIGRATION_LOG_FILE"
 emit_known_warnings=''
+
+# 未知 stderr 即使命令返回零，也必须保留错误并停止。
+: > "$commands"
+old_home='http://old.example'
+old_siteurl='http://old.example'
+mock_current_home="$old_home"
+mock_current_siteurl="$old_siteurl"
+elementor_installed=no
+emit_unknown_stderr=yes
+migration_log_init unknown-stderr
+set +e
+finalize_wordpress_migration change-domain old.example new.example https://new.example locked source_ > "$fixture/unknown-stderr-output" 2>&1
+status=$?
+set -e
+[[ $status -ne 0 ]]
+grep -Fq 'Unexpected WP-CLI stderr' "$fixture/unknown-stderr-output"
+grep -Fq 'Unexpected WP-CLI stderr' "$MIGRATION_LOG_FILE"
+emit_unknown_stderr=''
 
 # 有效运行网址正确但数据库选项被常量覆盖时，允许完成并保留提示。
 : > "$commands"
@@ -107,6 +130,7 @@ mock_effective_siteurl='https://new.example'
 elementor_installed=no
 migration_log_init constant-override
 finalize_wordpress_migration change-domain old.example new.example https://new.example locked source_ > "$fixture/constant-output" 2>&1
+migration_show_deferred_notices >> "$fixture/constant-output" 2>&1
 grep -Fq '有效运行网址已经正确，但 WordPress 选项读取值与其不一致' "$fixture/constant-output"
 mock_effective_home=''
 mock_effective_siteurl=''

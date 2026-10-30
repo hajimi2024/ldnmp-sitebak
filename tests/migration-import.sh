@@ -169,6 +169,20 @@ grep -Fq '🚨 警告：即将为 < new.example > 注入站点文件 & 数据库
 grep -Fq '✅ 已验证目标站点 < new.example > 为空站点，允许继续导入。' "$fixture/change-output"
 grep -Fq 'WordPress 后台：http://new.example/wp-admin' "$fixture/change-output"
 grep -Fq 'WordPress 前台：http://new.example' "$fixture/change-output"
+python3 - "$fixture/change-output" <<'PY'
+import re
+import sys
+
+text = open(sys.argv[1], encoding='utf-8').read()
+pattern = re.compile(
+    r'\[OK\] ✅ 站点 new\.example 已成功导入。\n'
+    r'\[OK\] 操作日志已保存：[^\n]+\.log\n'
+    r'------------------------\n\n'
+    r'WordPress 后台：http://new\.example/wp-admin\n\n'
+    r'WordPress 前台：http://new\.example\n'
+)
+assert pattern.search(text), text
+PY
 ! grep -Fq '本阶段未修改 Nginx、SSL' "$fixture/change-output"
 grep -Fq '适用于跨服务器导入并更换域名' "$fixture/change-output"
 assert_progress_output "$fixture/change-output" yes

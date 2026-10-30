@@ -65,8 +65,16 @@ migration_progress_set 60 '正在解压站点文件'
 migration_progress_end
 MIGRATION_STAGE_INDEX=7
 migration_stage_begin '站点配置检查'
-migration_progress_set 94 '正在清理站点瞬态缓存'
-migration_progress_set 99 '正在检查目标网址'
+migration_progress_set 10 '目标身份、WordPress 与数据库连接检查完成'
+migration_progress_set 20 '当前网址状态检查完成'
+migration_progress_set 30 'HTTPS 网址替换完成'
+migration_progress_set 40 'HTTP 网址替换完成'
+migration_progress_set 50 '协议相对网址替换完成'
+migration_progress_set 65 '裸域名替换及域名处理完成'
+migration_progress_set 75 'Elementor 检查和修复完成'
+migration_progress_set 85 '站点瞬态缓存清理完成'
+migration_progress_set 92 'WordPress 实际运行网址校验完成'
+migration_progress_set 97 '表前缀、安装状态和目标身份最终复核完成'
 migration_stage_complete '站点配置与目标网址校验完成'
 ok '站点已成功导入'
 '''
@@ -95,6 +103,8 @@ assert '\x1b[0;32m' in output, output
 assert '\x1b[0;90m' in output, output
 plain = re.sub(r'\x1b\[[0-9;]*[mK]', '', output).replace('\r', '')
 assert '60% 正在解压站点文件' in plain, plain
+stage_values = [int(value) for value in re.findall(r'([0-9]{1,3})% 阶段8/8', plain)]
+assert stage_values == [0, 10, 20, 30, 40, 50, 65, 75, 85, 92, 97, 100], stage_values
 stage_lines = [line for line in plain.splitlines() if '阶段8/8' in line]
 assert len(stage_lines) == 1, stage_lines
 assert '100% 阶段8/8：站点配置与目标网址校验完成' in stage_lines[0], stage_lines
