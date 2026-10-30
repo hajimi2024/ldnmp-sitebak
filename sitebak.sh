@@ -2,7 +2,7 @@
 
 set -Eeuo pipefail
 
-VERSION="0.7.28"
+VERSION="0.7.29"
 APP_NAME="LDNMP 单站备份恢复工具"
 
 WEB_ROOT="${SITEBAK_WEB_ROOT:-/home/web}"
@@ -1631,12 +1631,23 @@ validate_migration_target_scope() {
 }
 
 verify_empty_target_database() {
-  local tables
+  local tables tcp_args=()
   [[ "$DB_NAME" =~ ^[A-Za-z0-9_-]+$ ]] || { err '目标数据库名称包含不支持的字符。'; return 1; }
   prepare_db_client mysql || return 1
-  if ! tables="$(run_mysql --batch --skip-column-names -e 'SHOW TABLES' "$DB_NAME")"; then
-    err '无法连接并检查目标数据库。'
-    return 1
+  tcp_args=("${DB_CONNECT_ARGS[@]}")
+  if ! tables="$(run_mysql --batch --skip-column-names -e 'SHOW TABLES' "$DB_NAME" 2>/dev/null)"; then
+    if [[ -n "$DB_CONTAINER" && "$DB_HOST" != localhost && "$DB_HOST" != 127.0.0.1 ]]; then
+      DB_CONNECT_ARGS=()
+      migration_log INFO "数据库 TCP 检查失败，回退使用容器本地 Socket；容器=$DB_CONTAINER"
+      if ! tables="$(run_mysql --batch --skip-column-names -e 'SHOW TABLES' "$DB_NAME" 2>/dev/null)"; then
+        DB_CONNECT_ARGS=("${tcp_args[@]}")
+        err '无法连接并检查目标数据库。'
+        return 1
+      fi
+    else
+      err '无法连接并检查目标数据库。'
+      return 1
+    fi
   fi
   if [[ -n "${tables//[[:space:]]/}" ]]; then
     err "目标数据库不是空库，检测到数据表：$DB_NAME"

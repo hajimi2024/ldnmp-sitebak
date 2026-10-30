@@ -102,6 +102,7 @@ prepare_db_client mysql
 printf 'SELECT 1;\n' | run_mysql fixture_db
 grep -qx -- '-i' "$fixture/args"
 grep -q 'SELECT 1;' "$fixture/imported.sql"
+
 DB_HOST=mysql:3307
 prepare_db_client mysql
 [[ " ${DB_CONNECT_ARGS[*]} " == *' -P 3307 '* ]]
@@ -188,4 +189,20 @@ prepare_db_client dump
 DB_HOST=localhost
 prepare_db_client mysql
 [[ -z $DB_CONTAINER && $DB_CLIENT == mysql ]]
+# A container TCP probe may be unavailable while the local MySQL socket works.
+DB_NAME=fixture_db
+DB_HOST=mysql
+prepare_db_client() {
+  DB_CONTAINER=mysql
+  DB_CLIENT=mysql
+  DB_CONNECT_ARGS=(-h 127.0.0.1 --protocol=TCP -P 3306)
+}
+run_mysql() {
+  ((${#DB_CONNECT_ARGS[@]} == 0)) || return 1
+}
+prepare_db_client mysql
+MIGRATION_LOG_FILE="$fixture/fallback.log"
+: > "$MIGRATION_LOG_FILE"
+verify_empty_target_database
+[[ ${#DB_CONNECT_ARGS[@]} == 0 ]]
 printf 'PASS: container/native clients, MariaDB fallback, ports, credentials, failed dump, archive and restore preflight\n'
