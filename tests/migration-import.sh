@@ -161,6 +161,7 @@ if ! migration_preflight change-domain < <(printf '%s\n' 1 1 new.example yes) > 
   cat "$fixture/change-output" >&2
   exit 1
 fi
+return_to_menu wide < <(printf '0\n') >> "$fixture/change-output"
 grep -Fq '✅ 站点 new.example 已成功导入。' "$fixture/change-output"
 grep -Fq '源站域名：old.example' "$fixture/change-output"
 grep -Fq '目标域名：http://new.example' "$fixture/change-output"
@@ -177,9 +178,12 @@ text = open(sys.argv[1], encoding='utf-8').read()
 pattern = re.compile(
     r'\[OK\] ✅ 站点 new\.example 已成功导入。\n'
     r'\[OK\] 操作日志已保存：[^\n]+\.log\n'
-    r'------------------------\n\n'
+    r'---------------------------------------------------\n\n'
     r'WordPress 后台：http://new\.example/wp-admin\n\n'
-    r'WordPress 前台：http://new\.example\n'
+    r'WordPress 前台：http://new\.example\n\n'
+    r'---------------------------------------------------\n'
+    r'0\.  返回上一级\n'
+    r'---------------------------------------------------\n'
 )
 assert pattern.search(text), text
 PY

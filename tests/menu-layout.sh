@@ -36,6 +36,7 @@ touch "$fixture/html/example.com/wp-config.php" "$fixture/html/second.example/wp
   select_backup example.com backup < <(printf '0\n')
 ) > /dev/null 2> "$fixture/backup-selection" || true
 return_to_menu < <(printf '0\n') > "$fixture/return-menu"
+return_to_menu wide < <(printf '0\n') > "$fixture/return-menu-wide"
 
 # Exercise the real menu dispatch without running backup, restore or deletion.
 (
@@ -146,6 +147,8 @@ assert ('example.com 可用普通备份：\n' + '-' * 24 + '\n' in backup_select
 assert ('\n' + '-' * 24 + '\n0.  返回上一级\n' + '-' * 24 + '\n请选择：' in backup_selection), backup_selection
 return_menu = read_plain('return-menu')
 assert ('\n' + '-' * 24 + '\n0.  返回上一级\n' + '-' * 24 + '\n请输入：') in return_menu, return_menu
+return_menu_wide = read_plain('return-menu-wide')
+assert ('\n' + '-' * 51 + '\n0.  返回上一级\n' + '-' * 51 + '\n请输入：') in return_menu_wide, return_menu_wide
 PY
 
 printf 'PASS: fixed menu order, action routing, two-column layout and narrow-terminal fallback\n'

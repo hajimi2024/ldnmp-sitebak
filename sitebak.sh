@@ -2,7 +2,7 @@
 
 set -Eeuo pipefail
 
-VERSION="0.7.22"
+VERSION="0.7.23"
 APP_NAME="LDNMP 单站备份恢复工具"
 
 WEB_ROOT="${SITEBAK_WEB_ROOT:-/home/web}"
@@ -481,9 +481,18 @@ menu_title() {
 }
 
 render_return_section() {
-  menu_separator
+  local separator_style="${1:-menu}"
+  if [[ "$separator_style" == wide ]]; then
+    wide_separator
+  else
+    menu_separator
+  fi
   menu_item '0.  返回上一级'; printf '\n'
-  menu_separator
+  if [[ "$separator_style" == wide ]]; then
+    wide_separator
+  else
+    menu_separator
+  fi
 }
 
 render_main_menu() {
@@ -2564,10 +2573,10 @@ delete_backup_menu() {
 }
 
 return_to_menu() {
-  local choice
+  local separator_style="${1:-menu}" choice
   while true; do
     printf '\n'
-    render_return_section
+    render_return_section "$separator_style"
     ui_prompt '请输入：'
     ui_read choice || return 0
     [[ "$choice" == "0" ]] && return 0
@@ -2585,7 +2594,11 @@ run_menu_action() {
   if ((status != 0)) && [[ "${1:-}" != migration_preflight ]]; then
     err "操作未完成（退出码：$status），请查看上方错误信息。"
   fi
-  return_to_menu
+  if [[ "${1:-}" == migration_preflight ]]; then
+    return_to_menu wide
+  else
+    return_to_menu
+  fi
 }
 
 resolve_update_url() {
@@ -2898,7 +2911,7 @@ migration_preflight() (
   migration_show_deferred_notices
   ok "✅ 站点 $target_domain 已成功导入。"
   ok "操作日志已保存：$MIGRATION_LOG_FILE"
-  menu_separator
+  wide_separator
   printf '\n'
   admin_url="${target_url%/}/wp-admin"
   printf '%sWordPress 后台：%s\n\n' "$BLUE" "$(terminal_link "$admin_url" "$admin_url")"
