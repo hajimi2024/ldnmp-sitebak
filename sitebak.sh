@@ -2,7 +2,7 @@
 
 set -Eeuo pipefail
 
-VERSION="0.7.31"
+VERSION="0.7.32"
 APP_NAME="LDNMP 单站备份恢复工具"
 
 WEB_ROOT="${SITEBAK_WEB_ROOT:-/home/web}"
@@ -2707,14 +2707,16 @@ show_sites() {
 }
 
 list_sites_with_status() {
-  local domain suffix
+  local domain suffix previous=''
   while IFS= read -r domain; do
+    [[ -n "$previous" ]] && printf '\n'
     suffix=''
     if site_database_is_empty "$domain" >/dev/null 2>&1; then
       suffix='（空站点）'
     fi
     printf '%s%s\n' "$domain" "$suffix"
-  done < <(list_sites_array)
+    previous="$domain"
+  done < <(list_sites_by_creation_array)
 }
 
 show_backups() {
