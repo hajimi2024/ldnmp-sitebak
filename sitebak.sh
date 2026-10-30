@@ -2,7 +2,7 @@
 
 set -Eeuo pipefail
 
-VERSION="0.7.30"
+VERSION="0.7.31"
 APP_NAME="LDNMP 单站备份恢复工具"
 
 WEB_ROOT="${SITEBAK_WEB_ROOT:-/home/web}"
@@ -731,7 +731,8 @@ select_domain() {
   local sites=() domain suffix i
 
   while true; do
-    mapfile -t sites < <(list_sites_array)
+    # 备份、还原和快照入口与主菜单统一：新创建的站点在前，旧站点在后。
+    mapfile -t sites < <(list_sites_by_creation_array)
     header >&2
     if [[ -n "$intro" ]]; then
       printf '\n' >&2
@@ -2697,6 +2698,7 @@ show_sites() {
         ((status == 2)) && ((unknown_count += 1))
       fi
       printf '%s%d.%s %s%s%s\n' "$NUMBER" "$((i + 1))" "$BLUE" "$domain" "$suffix" "$RESET"
+      ((i + 1 < ${#sites[@]})) && printf '\n'
     done
   fi
   if ((unknown_count > 0)); then
