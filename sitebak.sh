@@ -2,7 +2,7 @@
 
 set -Eeuo pipefail
 
-VERSION="0.7.35"
+VERSION="0.7.36"
 APP_NAME="LDNMP 单站备份恢复工具"
 
 WEB_ROOT="${SITEBAK_WEB_ROOT:-/home/web}"
@@ -533,6 +533,8 @@ render_migration_menu() {
 
 header() {
   clear_screen
+  local homepage_ipv4
+  homepage_ipv4="$(get_public_ipv4 2>/dev/null || true)"
   printf '\n%s' "$BOLD"
   if (( $(terminal_columns) >= 38 )); then
     cat <<'EOF'
@@ -552,7 +554,11 @@ EOF
   printf '%s备份目录：%s%s%s\n' "$NUMBER" "$LIGHT_GREEN" "$BACKUP_DIR" "$RESET"
   printf '%s快照目录：%s%s%s  -  %s备注：%ssnapshot%s\n' "$NUMBER" "$LIGHT_GREEN" "$BACKUP_DIR" "$RESET" "$NUMBER" "$LIGHT_GREEN" "$RESET"
   printf '%s日志目录：%s%s%s\n' "$NUMBER" "$LIGHT_GREEN" "$MIGRATION_LOG_DIR" "$RESET"
-  printf '%s当前服务器：%s%s%s\n' "$NUMBER" "$PURPLE" "$(get_current_server_label)" "$RESET"
+  if [[ -n "$homepage_ipv4" ]]; then
+    printf '%s当前服务器：%s%s%s  %sIPv4：%s%s%s\n' "$NUMBER" "$PURPLE" "$(get_current_server_label)" "$RESET" "$NUMBER" "$LIGHT_GREEN" "$homepage_ipv4" "$RESET"
+  else
+    printf '%s当前服务器：%s%s%s\n' "$NUMBER" "$PURPLE" "$(get_current_server_label)" "$RESET"
+  fi
   printf '%sGitHub：%s%s%s%s%s%s\n\n' "$NUMBER" "$BLUE" "$NO_UNDERLINE" "$LINK_OPEN" "$PROJECT_URL" "$LINK_CLOSE" "$RESET"
   wide_separator
 }
