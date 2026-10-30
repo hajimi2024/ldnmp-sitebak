@@ -2,7 +2,7 @@
 
 set -Eeuo pipefail
 
-VERSION="0.7.18"
+VERSION="0.7.19"
 APP_NAME="LDNMP 单站备份恢复工具"
 
 WEB_ROOT="${SITEBAK_WEB_ROOT:-/home/web}"
@@ -1884,7 +1884,7 @@ confirm_target_operation() {
   printf '%s备份文件：%s%s%s\n\n' "$NUMBER" "$BLUE" "${archive##*/}" "$RESET"
   case "$operation" in
     change-domain|keep-domain)
-      printf '%s🚨 警告：即将为 %s 注入文件 & 数据库。%s\n\n' "$RED" "$target_domain" "$RESET"
+      printf '%s🚨 警告：即将为 %s< %s >%s 注入站点文件 & 数据库。%s\n\n' "$RED" "$CONFIRM_GREEN" "$target_domain" "$RED" "$RESET"
       ;;
     *)
       printf '%s🚨 警告：即将写入目标网站文件及数据库。%s\n\n' "$RED" "$RESET"

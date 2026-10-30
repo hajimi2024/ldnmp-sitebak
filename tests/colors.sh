@@ -18,6 +18,7 @@ source, fixture = sys.argv[1:]
 script = r'''
 source "$1"
 clear_screen() { :; }
+get_target_server_display() { printf '@test-vps 2c4g'; }
 header
 render_main_menu
 render_snapshot_menu
@@ -36,6 +37,7 @@ site="$(select_domain < <(printf '1\n'))"
 printf '\nSELECTED_SITE:%s\n' "$site"
 archive="$(select_backup example.com backup < <(printf '1\n'))"
 printf '\nSELECTED_ARCHIVE:%s\n' "$archive"
+confirm_target_operation change-domain old.example https://old.example new.example https://new.example server user /target/root target_db /backup.tar.gz < <(printf '\n') || :
 '''
 
 def run(terminal=False, **changes):
@@ -77,7 +79,7 @@ for number in range(9):
 for label in ['版本：', '备份目录：', '快照目录：', '日志目录：', '备注：']:
     assert '\x1b[1;33m' + label + '\x1b[0;92m' in colored
 assert '\x1b[1;33m当前服务器：\x1b[1;35m' in colored
-for value in ['0.7.18', fixture + '/backups', '/home/sitebak-logs', 'snapshot']:
+for value in ['0.7.19', fixture + '/backups', '/home/sitebak-logs', 'snapshot']:
     assert '\x1b[0;92m' + value + '\x1b[0m' in colored
 assert '\x1b[0;92m' + fixture + '/html' + '\x1b[0m' not in colored
 assert '\x1b[1;35m@' in colored
@@ -97,6 +99,8 @@ assert divider_count >= 2 and divider_count % 2 == 0
 assert '\x1b[1;96m        单站备份恢复工具\x1b[0m\n' in colored
 assert '\x1b[1;96m请输入你的选择：\x1b[1;33m\x1b[0m' in colored
 assert '\x1b[1;96m请输入 \x1b[1;92myes\x1b[1;96m 确认删除：\x1b[1;92m\x1b[0m' in colored
+assert ('\x1b[0;31m🚨 警告：即将为 \x1b[1;92m< new.example >'
+        '\x1b[0;31m 注入站点文件 & 数据库。\x1b[0m') in colored
 assert run(terminal=True, NO_COLOR='1') == plain
 assert run(terminal=True, TERM='dumb') == plain
 assert '\nSELECTED_SITE:example.com\n' in colored
