@@ -2,7 +2,7 @@
 
 set -Eeuo pipefail
 
-VERSION="0.7.33"
+VERSION="0.7.34"
 APP_NAME="LDNMP 单站备份恢复工具"
 
 WEB_ROOT="${SITEBAK_WEB_ROOT:-/home/web}"
@@ -3007,6 +3007,7 @@ migration_preflight() (
       migration_log ERROR 'DNS A 记录未解析到当前服务器，未执行科技 Lion 建站。'
       return 1
     }
+    ok '✅ 目标站点 DNS 已解析到当前服务器。'
     migration_log INFO "用户确认 DNS 已完成；域名=$target_domain；IPv4=$public_ipv4"
     migration_stage_begin '同域名目标站点创建与空数据库验证'
     ensure_keep_domain_target "$target_domain" "$tmp/kejilion-create.log" || {

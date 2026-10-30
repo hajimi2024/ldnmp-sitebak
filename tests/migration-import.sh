@@ -251,6 +251,7 @@ fi
 grep -Fq '操作类型：8.2 导入并保留域名' "$fixture/keep-output"
 ! grep -Fq '请选择已预建的空 WordPress 目标站点' "$fixture/keep-output"
 grep -Fq '请将 < same.example > 的 DNS 解析到当前服务器' "$fixture/keep-output"
+grep -Fq '✅ 目标站点 DNS 已解析到当前服务器。' "$fixture/keep-output"
 grep -Fq 'IPv4：203.0.113.10' "$fixture/keep-output"
 grep -Fq '适用于跨服务器导入并保留域名' "$fixture/keep-output"
 [[ $(< "$fixture/finalize-call") == 'keep-domain|same.example|same.example|http://same.example' ]]
