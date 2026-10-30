@@ -2,7 +2,7 @@
 
 set -Eeuo pipefail
 
-VERSION="0.7.37"
+VERSION="0.7.38"
 APP_NAME="LDNMP 单站备份恢复工具"
 
 WEB_ROOT="${SITEBAK_WEB_ROOT:-/home/web}"
@@ -1638,7 +1638,7 @@ validate_migration_target_scope() {
 }
 
 verify_empty_target_database() {
-  local tables tcp_args=()
+  local tables tcp_args=() quiet="${1:-no}"
   [[ "$DB_NAME" =~ ^[A-Za-z0-9_-]+$ ]] || { err '目标数据库名称包含不支持的字符。'; return 1; }
   prepare_db_client mysql || return 1
   tcp_args=("${DB_CONNECT_ARGS[@]}")
@@ -1648,11 +1648,11 @@ verify_empty_target_database() {
       migration_log INFO "数据库 TCP 检查失败，回退使用容器本地 Socket；容器=$DB_CONTAINER"
       if ! tables="$(run_mysql --batch --skip-column-names -e 'SHOW TABLES' "$DB_NAME" 2>/dev/null)"; then
         DB_CONNECT_ARGS=("${tcp_args[@]}")
-        err '无法连接并检查目标数据库。'
+        [[ "$quiet" == yes ]] || err '无法连接并检查目标数据库。'
         return 1
       fi
     else
-      err '无法连接并检查目标数据库。'
+      [[ "$quiet" == yes ]] || err '无法连接并检查目标数据库。'
       return 1
     fi
   fi
@@ -1663,18 +1663,22 @@ verify_empty_target_database() {
 }
 
 wait_for_empty_target_database() {
-  local timeout="${SITEBAK_DB_READY_TIMEOUT:-60}" interval="${SITEBAK_DB_READY_INTERVAL:-2}" elapsed=0
+  local initial_wait="${SITEBAK_DB_READY_INITIAL_WAIT:-5}" interval="${SITEBAK_DB_READY_INTERVAL:-3}" max_retries="${SITEBAK_DB_READY_RETRIES:-10}" retry=0
+  local domain_label="${CONFIRM_GREEN}< ${MIGRATION_SOURCE_DOMAIN:-目标站点} >${RESET}"
+  migration_stage_status "正在等待同域名目标数据库就绪：${domain_label}"
+  sleep "$initial_wait"
   while true; do
-    if verify_empty_target_database; then
+    if verify_empty_target_database yes; then
       return 0
     fi
-    (( elapsed >= timeout )) && break
-    migration_stage_status "目标数据库尚未就绪，${interval} 秒后重试（已等待 ${elapsed}/${timeout} 秒）"
+    if (( retry >= max_retries )); then
+      err "目标数据库在首次等待 ${initial_wait} 秒并重试 ${max_retries} 次后仍未就绪。"
+      return 1
+    fi
+    ((retry += 1))
+    migration_stage_status "目标数据库尚未就绪，${interval} 秒后第 ${retry}/${max_retries} 次重试：${domain_label}"
     sleep "$interval"
-    (( elapsed += interval ))
   done
-  err "目标数据库在 ${timeout} 秒内未就绪。"
-  return 1
 }
 
 classify_nginx_domain_blocks() {
@@ -1964,21 +1968,14 @@ resolve_kejilion_command() {
 }
 
 run_kejilion_wordpress_create() {
-  local command_path="$1" domain="$2" output_file="$3" line percent message mapped status
+  local command_path="$1" domain="$2" output_file="$3" line status
   : > "$output_file"
   chmod 0600 "$output_file"
   set +e
   KJ_WEB_NONINTERACTIVE=1 "$command_path" wp "$domain" 2>&1 |
     while IFS= read -r line || [[ -n "$line" ]]; do
       printf '%s\n' "$line" >> "$output_file"
-      if [[ "$line" =~ ^KPANEL_PROGRESS[[:space:]]+([0-9]{1,3})[[:space:]]+(.+)$ ]]; then
-        percent="${BASH_REMATCH[1]}"
-        message="${BASH_REMATCH[2]}"
-        ((percent > 100)) && continue
-        mapped="$percent"
-        ((mapped >= 100)) && mapped=99
-        migration_progress_set "$mapped" "$message" || true
-      fi
+      # 科技 Lion 的原生进度只写入受限临时文件；阶段 2 由 SiteBak 单独维护一条进度行。
     done
   status="${PIPESTATUS[0]}"
   set -e
@@ -1986,7 +1983,8 @@ run_kejilion_wordpress_create() {
 }
 
 ensure_keep_domain_target() {
-  local domain="$1" command_output="$2" target_dir wp_config nginx_items=() cert_items=() database_status command_path command_status
+  local domain="$1" command_output="$2" target_dir wp_config nginx_items=() cert_items=() database_status command_path command_status domain_label
+  domain_label="${CONFIRM_GREEN}< ${domain} >${RESET}"
   target_dir="$(site_path "$domain")"
   mapfile -t nginx_items < <(find_nginx_files "$domain")
   mapfile -t cert_items < <(find_cert_dirs "$domain")
@@ -2018,7 +2016,7 @@ ensure_keep_domain_target() {
 
   command_path="$(resolve_kejilion_command)" || return 1
   migration_log INFO "准备调用科技 Lion；命令路径=$command_path；域名=$domain"
-  migration_stage_status "正在调用科技 Lion 创建同域名 WordPress 站点：$domain"
+  migration_stage_status "正在创建同域名 WordPress 站点：${domain_label}"
   KEJILION_CREATE_STARTED=yes
   set +e
   run_kejilion_wordpress_create "$command_path" "$domain" "$command_output"
@@ -2032,7 +2030,7 @@ ensure_keep_domain_target() {
     return 1
   fi
   KEJILION_CREATE_FINISHED=yes
-  migration_progress_set 99 '科技 Lion 建站命令已完成，正在核验实际站点资源。' || true
+  migration_progress_set 90 "同域名 WordPress 站点创建完成，正在核验：${domain_label}" || true
   wp_config="$(find_wp_config "$target_dir" 2>/dev/null || true)"
   mapfile -t nginx_items < <(find_nginx_files "$domain")
   mapfile -t cert_items < <(find_cert_dirs "$domain")

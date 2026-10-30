@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 source "$(dirname "$0")/../sitebak.sh"
-SITEBAK_DB_READY_TIMEOUT=6
-SITEBAK_DB_READY_INTERVAL=2
+SITEBAK_DB_READY_INITIAL_WAIT=5
+SITEBAK_DB_READY_RETRIES=10
+SITEBAK_DB_READY_INTERVAL=3
 attempts=0
 verify_empty_target_database() {
   ((attempts += 1))

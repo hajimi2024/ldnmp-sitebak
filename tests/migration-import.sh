@@ -302,8 +302,9 @@ fi
 [[ $(< "$AUTO_CALL_FILE") == '1|wp|auto.example' ]]
 declare -f run_kejilion_wordpress_create | grep -Fq 'KJ_WEB_NONINTERACTIVE=1 "$command_path" wp "$domain"'
 ! declare -f run_kejilion_wordpress_create | grep -Eq '(^|[[:space:]])eval([[:space:]]|$)'
-grep -Fq '10% 阶段2/8：正在校验 WordPress 域名与现有站点' "$fixture/keep-auto-output"
-grep -Fq '99% 阶段2/8：kejilion.sh 原生建站产物已完成' "$fixture/keep-auto-output"
+grep -Fq '0% 阶段2/8：正在创建同域名 WordPress 站点' "$fixture/keep-auto-output"
+! grep -Fq 'KPANEL_PROGRESS' "$fixture/keep-auto-output"
+grep -Fq '90% 阶段2/8：同域名 WordPress 站点创建完成，正在核验' "$fixture/keep-auto-output"
 grep -Fq '100% 阶段2/8：同域名目标站点创建与空数据库验证完成' "$fixture/keep-auto-output"
 [[ $(parse_migration_wp_define "$SITE_ROOT/auto.example/wordpress/wp-config.php" DB_NAME) == auto_example ]]
 auto_log="$(find "$MIGRATION_LOG_DIR" -type f -name '*_import-keep_auto.example-to-auto.example_*.log' -print -quit)"
