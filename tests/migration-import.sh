@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 export NO_COLOR=1
+export SITEBAK_PUBLIC_IPV4=203.0.113.10
 source "$(dirname "$0")/../sitebak.sh"
 
 fixture="$(mktemp -d)"
@@ -73,7 +74,7 @@ assert_progress_output() {
       grep -Fq "0% 阶段${stage}/8" "$file"
     done
     for checkpoint in 25 50 75; do
-      grep -Fq "${checkpoint}% 阶段2/8" "$file"
+      grep -Eq "${checkpoint}% 阶段(1|2)/8" "$file"
     done
     [[ $(grep -c '100% 阶段[1-8]/8：' "$file") == 8 ]]
     [[ $(grep -c '100% 阶段[1-8]/8：.*完成' "$file") == 8 ]]
@@ -144,6 +145,11 @@ create_target_site() {
 write_target_nginx() {
   local domain="$1"
   printf 'server { listen 80; server_name %s; }\n' "$domain" > "${NGINX_CONF_DIRS[0]}/$domain.conf"
+}
+
+write_target_cert() {
+  local domain="$1"
+  : > "${CERT_DIRS[0]}/${domain}_cert.pem"
 }
 
 # Change-domain import writes only the selected target Root and target database.
@@ -236,17 +242,190 @@ start_case keep-success
 create_source_backup same.example nested same_source_db
 create_target_site same.example direct same_target_db
 write_target_nginx same.example
-if ! migration_preflight keep-domain < <(printf '%s\n' 1 1 same.example yes) > "$fixture/keep-output" 2>&1; then
+write_target_cert same.example
+if ! migration_preflight keep-domain < <(printf '%s\n' 1 yes yes) > "$fixture/keep-output" 2>&1; then
   cat "$fixture/keep-output" >&2
   exit 1
 fi
 grep -Fq '操作类型：导入并保留域名' "$fixture/keep-output"
-grep -Fq '请选择已预建的空 WordPress 目标站点' "$fixture/keep-output"
+! grep -Fq '请选择已预建的空 WordPress 目标站点' "$fixture/keep-output"
+grep -Fq '请将 < same.example > 的 DNS 解析到当前服务器' "$fixture/keep-output"
+grep -Fq 'IPv4：203.0.113.10' "$fixture/keep-output"
 grep -Fq '适用于跨服务器导入并保留域名' "$fixture/keep-output"
 [[ $(< "$fixture/finalize-call") == 'keep-domain|same.example|same.example|http://same.example' ]]
 [[ $(< "$SITE_ROOT/same.example/index.php") == source:same.example ]]
 [[ $(parse_migration_wp_define "$SITE_ROOT/same.example/wp-config.php" DB_NAME) == same_target_db ]]
 [[ $(parse_wp_table_prefix "$SITE_ROOT/same.example/wp-config.php") == source_ ]]
+
+# Keep-domain can create the same-domain empty site through the verified k entrypoint.
+start_case keep-auto-success
+create_source_backup auto.example nested auto_source_db
+mock_k="$fixture/mock-k"
+cat > "$mock_k" <<'MOCKK'
+#!/usr/bin/env bash
+set -Eeuo pipefail
+[[ "${KJ_WEB_NONINTERACTIVE:-}" == 1 && "$1" == wp && "$2" == auto.example ]]
+printf '%s|%s|%s\n' "${KJ_WEB_NONINTERACTIVE:-}" "$1" "$2" > "$AUTO_CALL_FILE"
+printf 'KPANEL_PROGRESS 10 正在校验 WordPress 域名与现有站点\n'
+printf 'DB_PASSWORD=must-not-enter-migration-log\n'
+printf 'KPANEL_PROGRESS 35 正在签发并配置站点证书\n'
+printf 'KPANEL_PROGRESS 75 正在获取并配置 WordPress 源码\n'
+mkdir -p "$AUTO_SITE_ROOT/$2/wordpress" "$AUTO_NGINX_ROOT" "$AUTO_CERT_ROOT"
+cat > "$AUTO_SITE_ROOT/$2/wordpress/wp-config.php" <<EOF
+<?php
+define('DB_NAME', 'auto_example');
+define('DB_USER', 'target_user');
+define('DB_PASSWORD', 'target_password');
+define('DB_HOST', 'mysql');
+\$table_prefix = 'target_';
+EOF
+printf 'blank target\n' > "$AUTO_SITE_ROOT/$2/wordpress/index.php"
+printf 'server { listen 80; server_name %s; }\n' "$2" > "$AUTO_NGINX_ROOT/$2.conf"
+: > "$AUTO_CERT_ROOT/${2}_cert.pem"
+printf 'KPANEL_PROGRESS 100 kejilion.sh 原生建站产物已完成\n'
+MOCKK
+chmod 0755 "$mock_k"
+AUTO_CALL_FILE="$fixture/auto-k-call"
+AUTO_SITE_ROOT="$SITE_ROOT"
+AUTO_NGINX_ROOT="${NGINX_CONF_DIRS[0]}"
+AUTO_CERT_ROOT="${CERT_DIRS[0]}"
+export AUTO_CALL_FILE AUTO_SITE_ROOT AUTO_NGINX_ROOT AUTO_CERT_ROOT
+resolve_kejilion_command() { printf '%s' "$mock_k"; }
+kejilion_database_exists() { return 1; }
+if ! migration_preflight keep-domain < <(printf '%s\n' 1 yes yes) > "$fixture/keep-auto-output" 2>&1; then
+  cat "$fixture/keep-auto-output" >&2
+  exit 1
+fi
+[[ $(< "$AUTO_CALL_FILE") == '1|wp|auto.example' ]]
+declare -f run_kejilion_wordpress_create | grep -Fq 'KJ_WEB_NONINTERACTIVE=1 "$command_path" wp "$domain"'
+! declare -f run_kejilion_wordpress_create | grep -Eq '(^|[[:space:]])eval([[:space:]]|$)'
+grep -Fq '10% 阶段2/8：正在校验 WordPress 域名与现有站点' "$fixture/keep-auto-output"
+grep -Fq '99% 阶段2/8：kejilion.sh 原生建站产物已完成' "$fixture/keep-auto-output"
+grep -Fq '100% 阶段2/8：同域名目标站点创建与空数据库验证完成' "$fixture/keep-auto-output"
+[[ $(parse_migration_wp_define "$SITE_ROOT/auto.example/wordpress/wp-config.php" DB_NAME) == auto_example ]]
+auto_log="$(find "$MIGRATION_LOG_DIR" -type f -name '*_import-keep_auto.example-to-auto.example_*.log' -print -quit)"
+[[ -f "$auto_log" ]]
+! grep -Fq 'must-not-enter-migration-log' "$auto_log"
+[[ -z "$(find "$MIGRATION_TMP_ROOT" -mindepth 1 -print -quit)" ]]
+
+# DNS cancellation happens after safe inspection but before k, and SiteBak temporary files are removed.
+start_case keep-dns-cancel
+create_source_backup cancelkeep.example nested cancel_source_db
+rm -f -- "$AUTO_CALL_FILE"
+migration_preflight keep-domain < <(printf '%s\n' 1 '') > "$fixture/keep-cancel-output" 2>&1
+grep -Fq '已取消本次导入' "$fixture/keep-cancel-output"
+[[ ! -e "$AUTO_CALL_FILE" ]]
+[[ ! -e "$SITE_ROOT/cancelkeep.example" ]]
+[[ -z "$(find "$MIGRATION_TMP_ROOT" -mindepth 1 -print -quit)" ]]
+
+# An invalid public IPv4 stops before k is called.
+start_case keep-invalid-ip
+create_source_backup invalidip.example nested invalid_source_db
+rm -f -- "$AUTO_CALL_FILE"
+SITEBAK_PUBLIC_IPV4=not-an-ip
+expect_failure migration_preflight keep-domain < <(printf '%s\n' 1 yes)
+grep -Fq '不是合法的 IPv4 地址' "$fixture/failure-output"
+[[ ! -e "$AUTO_CALL_FILE" ]]
+SITEBAK_PUBLIC_IPV4=203.0.113.10
+
+# Private, CGNAT and failed public IPv4 lookups stop before k is called.
+for invalid_ipv4 in 10.0.0.1 172.16.0.1 192.168.1.1 100.64.0.1; do
+  ! valid_ipv4 "$invalid_ipv4"
+done
+start_case keep-ip-query-failure
+create_source_backup noip.example nested noip_source_db
+rm -f -- "$AUTO_CALL_FILE"
+unset SITEBAK_PUBLIC_IPV4
+ip() { printf '1.1.1.1 via 10.0.0.1 dev eth0 src 10.0.0.2\n'; }
+curl() { return 22; }
+expect_failure migration_preflight keep-domain < <(printf '%s\n' 1)
+grep -Fq '无法取得当前服务器的合法公网 IPv4' "$fixture/failure-output"
+[[ ! -e "$AUTO_CALL_FILE" ]]
+
+# A public outbound source address is preferred without calling the external lookup.
+ip() { printf '1.1.1.1 via 198.51.100.1 dev eth0 src 198.51.100.8\n'; }
+curl() { printf 'curl-must-not-run\n' >> "$fixture/curl-called"; return 22; }
+[[ $(get_public_ipv4) == 198.51.100.8 ]]
+[[ ! -e "$fixture/curl-called" ]]
+SITEBAK_PUBLIC_IPV4=203.0.113.10
+
+# Partial same-domain resources are rejected without running k.
+start_case keep-partial
+create_source_backup partial.example nested partial_source_db
+mkdir -p "$SITE_ROOT/partial.example"
+rm -f -- "$AUTO_CALL_FILE"
+expect_failure migration_preflight keep-domain < <(printf '%s\n' 1 yes)
+grep -Fq '残留目录、Nginx 或证书资源' "$fixture/failure-output"
+[[ ! -e "$AUTO_CALL_FILE" ]]
+
+# A missing or unsafe k entrypoint stops before external resources or imports are written.
+start_case keep-k-missing
+create_source_backup nok.example nested nok_source_db
+resolve_kejilion_command() { err '未找到科技 Lion 命令 k，尚未创建目标站点。'; return 1; }
+expect_failure migration_preflight keep-domain < <(printf '%s\n' 1 yes)
+grep -Fq '未找到科技 Lion 命令 k' "$fixture/failure-output"
+[[ ! -e "$SITE_ROOT/nok.example" && ! -e "$fixture/imported.sql" ]]
+
+start_case keep-k-unsafe
+create_source_backup unsafe.example nested unsafe_source_db
+resolve_kejilion_command() { err '科技 Lion 命令 k 可被组或其他用户写入，拒绝执行。'; return 1; }
+expect_failure migration_preflight keep-domain < <(printf '%s\n' 1 yes)
+grep -Fq '可被组或其他用户写入' "$fixture/failure-output"
+[[ ! -e "$SITE_ROOT/unsafe.example" && ! -e "$fixture/imported.sql" ]]
+resolve_kejilion_command() { printf '%s' "$mock_k"; }
+
+# A successful k exit without complete WordPress, Nginx and certificate resources is rejected.
+start_case keep-k-incomplete
+create_source_backup incomplete.example nested incomplete_source_db
+cat > "$mock_k" <<'MOCKKINCOMPLETE'
+#!/usr/bin/env bash
+set -Eeuo pipefail
+printf 'KPANEL_PROGRESS 100 科技 Lion 报告完成\n'
+mkdir -p "$AUTO_SITE_ROOT/$2"
+MOCKKINCOMPLETE
+chmod 0755 "$mock_k"
+expect_failure migration_preflight keep-domain < <(printf '%s\n' 1 yes)
+grep -Fq 'WordPress、Nginx 或证书产物不完整' "$fixture/failure-output"
+[[ ! -e "$fixture/imported.sql" ]]
+
+# An existing complete same-domain site with data is never reused or overwritten.
+start_case keep-existing-nonempty
+create_source_backup occupied.example nested occupied_source_db
+create_target_site occupied.example nested occupied_target_db
+write_target_nginx occupied.example
+write_target_cert occupied.example
+printf 'existing_table\n' > "$db_tables_file"
+cp -a "$SITE_ROOT/occupied.example" "$fixture/occupied-before"
+expect_failure migration_preflight keep-domain < <(printf '%s\n' 1 yes)
+grep -Fq '目标数据库不是空库' "$fixture/failure-output"
+diff -r "$fixture/occupied-before" "$SITE_ROOT/occupied.example"
+[[ ! -e "$fixture/imported.sql" ]]
+
+# A failed k command stops before import, retains external partial resources, and removes raw output.
+start_case keep-k-failure
+create_source_backup failed.example nested failed_source_db
+cat > "$mock_k" <<'MOCKKFAIL'
+#!/usr/bin/env bash
+set -Eeuo pipefail
+printf '%s|%s|%s\n' "${KJ_WEB_NONINTERACTIVE:-}" "$1" "$2" > "$AUTO_CALL_FILE"
+printf 'KPANEL_PROGRESS 20 正在准备 LDNMP 环境\n'
+printf 'DB_PASSWORD=failed-secret\n'
+mkdir -p "$AUTO_SITE_ROOT/$2"
+exit 7
+MOCKKFAIL
+chmod 0755 "$mock_k"
+AUTO_SITE_ROOT="$SITE_ROOT"
+export AUTO_SITE_ROOT
+rm -f -- "$AUTO_CALL_FILE"
+expect_failure migration_preflight keep-domain < <(printf '%s\n' 1 yes)
+grep -Fq '科技 Lion 创建站点失败（退出码：7）' "$fixture/failure-output"
+[[ $(< "$AUTO_CALL_FILE") == '1|wp|failed.example' ]]
+[[ -d "$SITE_ROOT/failed.example" ]]
+[[ ! -e "$fixture/imported.sql" ]]
+failed_log="$(find "$MIGRATION_LOG_DIR" -type f -name '*_import-keep_failed.example-to-failed.example_*.log' -print -quit)"
+[[ -f "$failed_log" ]]
+! grep -Fq 'failed-secret' "$failed_log"
+[[ -z "$(find "$MIGRATION_TMP_ROOT" -mindepth 1 -print -quit)" ]]
 
 # A rejected confirmation performs no write.
 start_case cancel

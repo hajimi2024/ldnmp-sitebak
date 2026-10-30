@@ -19,6 +19,7 @@ script = r'''
 source "$1"
 clear_screen() { :; }
 get_target_server_display() { printf '@test-vps 2c4g'; }
+get_current_server_label() { printf '@test-vps 2c4g'; }
 header
 render_main_menu
 render_snapshot_menu
@@ -44,6 +45,7 @@ ui_green_input_prompt '请输入目标站点编号或域名：'
 ui_read green_domain < <(printf 'new.example\n')
 printf '\n'
 migration_empty_site_ok new.example
+confirm_keep_domain_dns keep.example 203.0.113.10 < <(printf 'yes\n')
 '''
 
 def run(terminal=False, **changes):
@@ -85,7 +87,7 @@ for number in range(9):
 for label in ['版本：', '备份目录：', '快照目录：', '日志目录：', '备注：']:
     assert '\x1b[1;33m' + label + '\x1b[0;92m' in colored
 assert '\x1b[1;33m当前服务器：\x1b[1;35m' in colored
-for value in ['0.7.25', fixture + '/backups', '/home/sitebak-logs', 'snapshot']:
+for value in ['0.7.26', fixture + '/backups', '/home/sitebak-logs', 'snapshot']:
     assert '\x1b[0;92m' + value + '\x1b[0m' in colored
 assert '\x1b[0;92m' + fixture + '/html' + '\x1b[0m' not in colored
 assert '\x1b[1;35m@' in colored
@@ -113,6 +115,11 @@ assert '\x1b[1;96m请输入目标站点编号或域名：\x1b[1;92m' in colored
 assert '\x1b[1;92m（空站点）\x1b[0m' in colored
 assert ('\x1b[0;32m[OK] ✅ 已验证目标站点 \x1b[1;92m< new.example >'
         '\x1b[0;32m 为空站点，允许继续导入。\x1b[0m') in colored
+assert ('\x1b[1;96m请将 \x1b[1;92m< keep.example >\x1b[1;96m 的 DNS 解析到当前服务器。\x1b[0m'
+        in colored)
+assert ('\x1b[1;33m当前服务器：\x1b[1;35m@test-vps 2c4g\x1b[0m  '
+        '\x1b[1;33mIPv4：\x1b[0;92m203.0.113.10\x1b[0m') in colored
+assert '\x1b[1;96m若 DNS 解析完成，请输入 \x1b[1;92myes\x1b[1;96m：\x1b[1;92m' in colored
 assert run(terminal=True, NO_COLOR='1') == plain
 assert run(terminal=True, TERM='dumb') == plain
 assert '\nSELECTED_SITE:example.com\n' in colored

@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 export NO_COLOR=1
+export SITEBAK_PUBLIC_IPV4=203.0.113.10
 source "$(dirname "$0")/../sitebak.sh"
 
 fixture="$(mktemp -d)"
@@ -208,22 +209,19 @@ diff -r "$fixture/target-before" "$SITE_ROOT/target.example"
 diff -r "$fixture/unrelated-before" "$SITE_ROOT/zzz.example"
 db_tables=''
 
-# Preserve-domain mode requires the manifest and selected target domain to match.
-expect_failure migration_preflight keep-domain < <(printf '%s\n' 1 1 target.example)
-grep -Fq '要求源域名与目标域名完全一致' "$fixture/failure-output"
-
-# Preserve-domain preflight also succeeds when the uploaded backup and target match.
+# Preserve-domain preflight derives its target from the manifest and reuses a complete empty same-domain site.
 fixture_stamp=20261026_120100
 create_source_backup same.example nested same_db
 same_archive="$BACKUP_DIR/same.example_${fixture_stamp}.tar.gz"
 create_target_site same.example direct same_target_db
 printf 'server { listen 80; server_name same.example; }\n' > "${NGINX_CONF_DIRS[0]}/same.example.conf"
+touch "${CERT_DIRS[0]}/same.example_cert.pem"
 cp -a "$SITE_ROOT/same.example" "$fixture/same-before"
 mapfile -t backup_options < <(list_backups_for_domain '' backup)
 for i in "${!backup_options[@]}"; do
   [[ "${backup_options[$i]}" == "$same_archive" ]] && same_choice=$((i + 1))
 done
-if ! migration_preflight keep-domain < <(printf '%s\n' "$same_choice" 1 same.example no) > "$fixture/keep-output" 2>&1; then
+if ! migration_preflight keep-domain < <(printf '%s\n' "$same_choice" yes no) > "$fixture/keep-output" 2>&1; then
   cat "$fixture/keep-output" >&2
   exit 1
 fi
@@ -231,6 +229,11 @@ if ! grep -Fq '源站域名：same.example' "$fixture/keep-output" || ! grep -Fq
   cat "$fixture/keep-output" >&2
   exit 1
 fi
+! grep -Fq '请选择已预建的空 WordPress 目标站点' "$fixture/keep-output"
+grep -Fq '请将 < same.example > 的 DNS 解析到当前服务器' "$fixture/keep-output"
+grep -Fq 'IPv4：203.0.113.10' "$fixture/keep-output"
+grep -Fq '100% 阶段1/8：备份包检查完成' "$fixture/keep-output"
+grep -Fq '100% 阶段2/8：同域名目标站点创建与空数据库验证完成' "$fixture/keep-output"
 diff -r "$fixture/same-before" "$SITE_ROOT/same.example"
 diff -r "$fixture/unrelated-before" "$SITE_ROOT/zzz.example"
 

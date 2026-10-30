@@ -2,7 +2,7 @@
 
 set -Eeuo pipefail
 
-VERSION="0.7.25"
+VERSION="0.7.26"
 APP_NAME="LDNMP 单站备份恢复工具"
 
 WEB_ROOT="${SITEBAK_WEB_ROOT:-/home/web}"
@@ -1827,6 +1827,170 @@ get_current_server_label() {
   printf '@%s %sc%sg' "$host" "$cores" "$memory_gb"
 }
 
+valid_ipv4() {
+  local value="${1:-}" octet
+  local octets=()
+  [[ "$value" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]] || return 1
+  IFS='.' read -r -a octets <<< "$value"
+  ((${#octets[@]} == 4)) || return 1
+  for octet in "${octets[@]}"; do
+    ((10#$octet >= 0 && 10#$octet <= 255)) || return 1
+  done
+  [[ "$value" != 0.* && "$value" != 10.* && "$value" != 127.* && "$value" != 169.254.* && "$value" != 192.168.* && "$value" != 224.* && "$value" != 255.* ]] || return 1
+  ((10#${octets[0]} != 172 || 10#${octets[1]} < 16 || 10#${octets[1]} > 31)) || return 1
+  ((10#${octets[0]} != 100 || 10#${octets[1]} < 64 || 10#${octets[1]} > 127))
+}
+
+get_public_ipv4() {
+  local value endpoint
+  if [[ -n "${SITEBAK_PUBLIC_IPV4:-}" ]]; then
+    value="${SITEBAK_PUBLIC_IPV4//[[:space:]]/}"
+    valid_ipv4 "$value" || { err 'SITEBAK_PUBLIC_IPV4 不是合法的 IPv4 地址。'; return 1; }
+    printf '%s' "$value"
+    return 0
+  fi
+  if command -v ip >/dev/null 2>&1; then
+    value="$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{ for (i = 1; i <= NF; i++) if ($i == "src") { print $(i + 1); exit } }' || true)"
+    value="${value//[[:space:]]/}"
+    if valid_ipv4 "$value"; then
+      printf '%s' "$value"
+      return 0
+    fi
+  fi
+  command -v curl >/dev/null 2>&1 || { err '无法查询当前服务器公网 IPv4：缺少 curl。'; return 1; }
+  for endpoint in 'https://api.ipify.org' 'https://ipv4.icanhazip.com'; do
+    value="$(curl -4 -fsS --connect-timeout 3 --max-time 5 "$endpoint" 2>/dev/null || true)"
+    value="${value//[[:space:]]/}"
+    if valid_ipv4 "$value"; then
+      printf '%s' "$value"
+      return 0
+    fi
+  done
+  err '无法取得当前服务器的合法公网 IPv4，尚未执行科技 Lion 建站命令。'
+  return 1
+}
+
+confirm_keep_domain_dns() {
+  local domain="$1" public_ipv4="$2" server_label confirmation
+  server_label="$(get_current_server_label)" || return 1
+  header
+  printf '%s请将 %s< %s >%s 的 DNS 解析到当前服务器。%s\n\n' "$BOLD" "$CONFIRM_GREEN" "$domain" "$BOLD" "$RESET"
+  printf '%s当前服务器：%s%s%s  %sIPv4：%s%s%s\n\n' "$NUMBER" "$PURPLE" "$server_label" "$RESET" "$NUMBER" "$LIGHT_GREEN" "$public_ipv4" "$RESET"
+  wide_separator
+  while true; do
+    ui_confirm_prompt '若 DNS 解析完成，请输入 yes：'
+    ui_read confirmation || return 1
+    case "$confirmation" in
+      yes) return 0 ;;
+      '') warn '已取消本次导入。'; return 1 ;;
+      0) warn '已返回上一级。'; return 1 ;;
+      *) warn '输入错误，请输入完整小写 yes；直接回车取消，或输入 0 返回上一级。' ;;
+    esac
+  done
+}
+
+kejilion_database_exists() {
+  local domain="$1" database output query
+  database="$(domain_to_db_name "$domain")"
+  command -v docker >/dev/null 2>&1 || return 2
+  docker inspect mysql >/dev/null 2>&1 || return 2
+  query="SELECT SCHEMA_NAME FROM INFORMATION_SCHEMA.SCHEMATA WHERE SCHEMA_NAME = '${database}';"
+  output="$(docker exec mysql sh -c 'export MYSQL_PWD="$MYSQL_ROOT_PASSWORD"; exec mysql -uroot --batch --skip-column-names -e "$1"' sh "$query" 2>/dev/null)" || return 2
+  [[ "$output" == "$database" ]]
+}
+
+resolve_kejilion_command() {
+  local candidate real owner mode
+  candidate="$(command -v k 2>/dev/null || true)"
+  [[ -n "$candidate" ]] || { err '未找到科技 Lion 命令 k，尚未创建目标站点。'; return 1; }
+  real="$(realpath -e -- "$candidate" 2>/dev/null || true)"
+  [[ -n "$real" && -f "$real" && -x "$real" ]] || { err '科技 Lion 命令 k 不是可安全执行的文件。'; return 1; }
+  owner="$(stat -c '%u' -- "$real" 2>/dev/null || true)"
+  mode="$(stat -c '%a' -- "$real" 2>/dev/null || true)"
+  [[ "$owner" == 0 && "$mode" =~ ^[0-7]{3,4}$ ]] || { err '科技 Lion 命令 k 的属主或权限无法安全确认。'; return 1; }
+  (( (8#$mode & 0022) == 0 )) || { err '科技 Lion 命令 k 可被组或其他用户写入，拒绝执行。'; return 1; }
+  printf '%s' "$real"
+}
+
+run_kejilion_wordpress_create() {
+  local command_path="$1" domain="$2" output_file="$3" line percent message mapped status
+  : > "$output_file"
+  chmod 0600 "$output_file"
+  set +e
+  KJ_WEB_NONINTERACTIVE=1 "$command_path" wp "$domain" 2>&1 |
+    while IFS= read -r line || [[ -n "$line" ]]; do
+      printf '%s\n' "$line" >> "$output_file"
+      if [[ "$line" =~ ^KPANEL_PROGRESS[[:space:]]+([0-9]{1,3})[[:space:]]+(.+)$ ]]; then
+        percent="${BASH_REMATCH[1]}"
+        message="${BASH_REMATCH[2]}"
+        ((percent > 100)) && continue
+        mapped="$percent"
+        ((mapped >= 100)) && mapped=99
+        migration_progress_set "$mapped" "$message" || true
+      fi
+    done
+  status="${PIPESTATUS[0]}"
+  set -e
+  return "$status"
+}
+
+ensure_keep_domain_target() {
+  local domain="$1" command_output="$2" target_dir wp_config nginx_items=() cert_items=() database_status command_path command_status
+  target_dir="$(site_path "$domain")"
+  mapfile -t nginx_items < <(find_nginx_files "$domain")
+  mapfile -t cert_items < <(find_cert_dirs "$domain")
+  wp_config="$(find_wp_config "$target_dir" 2>/dev/null || true)"
+
+  if [[ -n "$wp_config" ]]; then
+    ((${#nginx_items[@]} > 0 && ${#cert_items[@]} > 0)) || {
+      err '同域名站点仅存在部分目录、Nginx 或证书资源，请先使用科技 Lion 清理后重试。'
+      return 1
+    }
+    migration_stage_status "已发现同域名空站点候选，正在复核：$domain"
+    migration_log INFO "发现同域名站点，复用前执行完整空站点验证；域名=$domain"
+    return 0
+  fi
+
+  if [[ -e "$target_dir" || ${#nginx_items[@]} -gt 0 || ${#cert_items[@]} -gt 0 ]]; then
+    err '检测到同域名的残留目录、Nginx 或证书资源，请先使用科技 Lion 清理后重试。'
+    return 1
+  fi
+  set +e
+  kejilion_database_exists "$domain"
+  database_status=$?
+  set -e
+  case "$database_status" in
+    0) err "检测到同域名数据库残留：$(domain_to_db_name "$domain")，请先使用科技 Lion 清理后重试。"; return 1 ;;
+    1) ;;
+    *) err '无法确认同域名数据库是否存在，拒绝自动创建站点。'; return 1 ;;
+  esac
+
+  command_path="$(resolve_kejilion_command)" || return 1
+  migration_log INFO "准备调用科技 Lion；命令路径=$command_path；域名=$domain"
+  migration_stage_status "正在调用科技 Lion 创建同域名 WordPress 站点：$domain"
+  KEJILION_CREATE_STARTED=yes
+  set +e
+  run_kejilion_wordpress_create "$command_path" "$domain" "$command_output"
+  command_status=$?
+  set -e
+  migration_log INFO "科技 Lion 建站命令结束；退出状态=$command_status；域名=$domain"
+  rm -f -- "$command_output"
+  if ((command_status != 0)); then
+    KEJILION_CREATE_FAILURE_REPORTED=yes
+    err "科技 Lion 创建站点失败（退出码：$command_status），可能已留下部分站点资源；请使用科技 Lion 检查并清理。"
+    return 1
+  fi
+  KEJILION_CREATE_FINISHED=yes
+  migration_progress_set 99 '科技 Lion 建站命令已完成，正在核验实际站点资源。' || true
+  wp_config="$(find_wp_config "$target_dir" 2>/dev/null || true)"
+  mapfile -t nginx_items < <(find_nginx_files "$domain")
+  mapfile -t cert_items < <(find_cert_dirs "$domain")
+  [[ -n "$wp_config" && ${#nginx_items[@]} -gt 0 && ${#cert_items[@]} -gt 0 ]] || {
+    err '科技 Lion 返回成功，但 WordPress、Nginx 或证书产物不完整；请使用科技 Lion 检查并清理。'
+    return 1
+  }
+}
+
 nginx_target_config_fingerprint() {
   local domain="$1" file
   local files=()
@@ -2714,9 +2878,10 @@ snapshots_menu() {
 
 migration_preflight() (
   umask 077
-  local mode="$1" archive target_domain target_dir target_wp_config target_wp_root target_scheme target_url target_sql admin_url
+  local mode="$1" archive target_domain target_dir target_wp_config target_wp_root target_scheme target_url target_sql admin_url public_ipv4
   local tmp='' status=0 target_owner locked_identity archive_sha256 database_imported=no files_replaced=no backup_intro=''
   local target_db_user target_db_password target_db_host
+  local KEJILION_CREATE_STARTED=no KEJILION_CREATE_FINISHED=no KEJILION_CREATE_FAILURE_REPORTED=no
   case "$mode" in
     change-domain) backup_intro='适用于跨服务器导入并更换域名' ;;
     keep-domain) backup_intro='适用于跨服务器导入并保留域名' ;;
@@ -2728,6 +2893,10 @@ migration_preflight() (
     status=$?
     set +e
     migration_progress_end
+    if ((status != 0)) && [[ "$KEJILION_CREATE_STARTED" == yes && "$KEJILION_CREATE_FINISHED" != yes && "$KEJILION_CREATE_FAILURE_REPORTED" != yes ]]; then
+      warn "科技 Lion 建站过程被中断，可能已留下部分站点资源；请使用科技 Lion 检查并清理。"
+      migration_log WARN "科技 Lion 建站过程异常中断，可能存在部分站点资源。"
+    fi
     if [[ -n "$tmp" && -d "$tmp" ]]; then
       rm -rf -- "$tmp"
       migration_log INFO "已清理本次迁移临时目录。"
@@ -2743,34 +2912,36 @@ migration_preflight() (
     return 0
   }
   migration_log INFO "已选择普通备份：${archive##*/}"
-
-  target_domain=''
-  select_existing_domain '请选择已预建的空 WordPress 目标站点' target_domain || {
-    migration_log INFO '用户取消了目标站点选择。'
-    return 0
-  }
-  if [[ "${SELECTED_DOMAIN_INPUT_KIND:-}" == number ]]; then
-    confirm_numeric_target_domain "$target_domain" || {
-      migration_log INFO '用户未完成数字选择后的目标域名复核。'
-      return 0
-    }
-  fi
   MIGRATION_STAGE_INDEX=0
   DB_CLIENT_ANNOUNCED=''
-  migration_stage_begin '目标站点与空数据库验证'
-  target_dir="$(site_path "$target_domain")"
-  target_wp_config="$(find_wp_config "$target_dir")" || { err '无法唯一确定目标 WordPress Root。'; migration_log ERROR '目标 WordPress Root 不唯一。'; return 1; }
-  validate_migration_target_scope "$target_domain" "$target_wp_config" || { migration_log ERROR '目标 WordPress Root 路径范围检查失败。'; return 1; }
-  target_wp_root="$MIGRATION_TARGET_WP_ROOT"
-  read_migration_db_config_file "$target_wp_config" || { migration_log ERROR '无法读取目标数据库配置。'; return 1; }
-  target_db_user="$DB_USER"
-  target_db_password="$DB_PASSWORD"
-  target_db_host="$DB_HOST"
-  migration_stage_status "正在检查目标数据库是否为空：$DB_NAME"
-  verify_empty_target_database || { migration_log ERROR "目标数据库空库检查失败；目标数据库=$DB_NAME"; return 1; }
-  migration_empty_site_ok "$target_domain"
-  migration_log INFO "已验证目标站点为空站点；域名=$target_domain；数据库=$DB_NAME"
-  migration_stage_complete "目标站点与空数据库验证完成"
+
+  if [[ "$mode" == change-domain ]]; then
+    target_domain=''
+    select_existing_domain '请选择已预建的空 WordPress 目标站点' target_domain || {
+      migration_log INFO '用户取消了目标站点选择。'
+      return 0
+    }
+    if [[ "${SELECTED_DOMAIN_INPUT_KIND:-}" == number ]]; then
+      confirm_numeric_target_domain "$target_domain" || {
+        migration_log INFO '用户未完成数字选择后的目标域名复核。'
+        return 0
+      }
+    fi
+    migration_stage_begin '目标站点与空数据库验证'
+    target_dir="$(site_path "$target_domain")"
+    target_wp_config="$(find_wp_config "$target_dir")" || { err '无法唯一确定目标 WordPress Root。'; migration_log ERROR '目标 WordPress Root 不唯一。'; return 1; }
+    validate_migration_target_scope "$target_domain" "$target_wp_config" || { migration_log ERROR '目标 WordPress Root 路径范围检查失败。'; return 1; }
+    target_wp_root="$MIGRATION_TARGET_WP_ROOT"
+    read_migration_db_config_file "$target_wp_config" || { migration_log ERROR '无法读取目标数据库配置。'; return 1; }
+    target_db_user="$DB_USER"
+    target_db_password="$DB_PASSWORD"
+    target_db_host="$DB_HOST"
+    migration_stage_status "正在检查目标数据库是否为空：$DB_NAME"
+    verify_empty_target_database || { migration_log ERROR "目标数据库空库检查失败；目标数据库=$DB_NAME"; return 1; }
+    migration_empty_site_ok "$target_domain"
+    migration_log INFO "已验证目标站点为空站点；域名=$target_domain；数据库=$DB_NAME"
+    migration_stage_complete '目标站点与空数据库验证完成'
+  fi
 
   [[ -d "$MIGRATION_TMP_ROOT" ]] || { err "迁移临时目录根路径不存在：$MIGRATION_TMP_ROOT"; migration_log ERROR '迁移临时目录根路径不存在。'; return 1; }
   tmp="$(mktemp -d "$MIGRATION_TMP_ROOT/sitebak.migrate.XXXXXX")"
@@ -2786,6 +2957,40 @@ migration_preflight() (
   migration_stage_complete "备份包检查完成：${archive##*/}"
   migration_log INFO "备份预检通过；源域名=$MIGRATION_SOURCE_DOMAIN；源数据库=$MIGRATION_SOURCE_DB；迁移表前缀=$MIGRATION_SOURCE_TABLE_PREFIX；备份指纹=$archive_sha256"
 
+  if [[ "$mode" == keep-domain ]]; then
+    target_domain="$MIGRATION_SOURCE_DOMAIN"
+    migration_log_finalize_name "$mode" "$MIGRATION_SOURCE_DOMAIN" "$target_domain" || {
+      err '无法整理迁移日志文件名。'
+      migration_log ERROR '无法将迁移日志重命名为包含源域名和目标域名的名称。'
+      return 1
+    }
+    public_ipv4="$(get_public_ipv4)" || { migration_log ERROR '无法取得当前服务器公网 IPv4，未执行科技 Lion 建站。'; return 1; }
+    migration_log INFO "等待用户确认 DNS；源域名=$MIGRATION_SOURCE_DOMAIN；服务器=$(get_current_server_label)；IPv4=$public_ipv4"
+    confirm_keep_domain_dns "$target_domain" "$public_ipv4" || {
+      migration_log INFO '用户未确认 DNS 已解析到当前服务器，未执行科技 Lion 建站。'
+      return 0
+    }
+    migration_log INFO "用户确认 DNS 已完成；域名=$target_domain；IPv4=$public_ipv4"
+    migration_stage_begin '同域名目标站点创建与空数据库验证'
+    ensure_keep_domain_target "$target_domain" "$tmp/kejilion-create.log" || {
+      migration_log ERROR '同域名目标站点创建或资源冲突检查失败。'
+      return 1
+    }
+    target_dir="$(site_path "$target_domain")"
+    target_wp_config="$(find_wp_config "$target_dir")" || { err '科技 Lion 建站后无法唯一确定目标 WordPress Root。'; migration_log ERROR '建站后目标 WordPress Root 不唯一。'; return 1; }
+    validate_migration_target_scope "$target_domain" "$target_wp_config" || { migration_log ERROR '建站后目标 WordPress Root 路径范围检查失败。'; return 1; }
+    target_wp_root="$MIGRATION_TARGET_WP_ROOT"
+    read_migration_db_config_file "$target_wp_config" || { migration_log ERROR '建站后无法读取目标数据库配置。'; return 1; }
+    target_db_user="$DB_USER"
+    target_db_password="$DB_PASSWORD"
+    target_db_host="$DB_HOST"
+    migration_stage_status "正在检查同域名目标数据库是否为空：$DB_NAME"
+    verify_empty_target_database || { migration_log ERROR "建站后目标数据库空库检查失败；目标数据库=$DB_NAME"; return 1; }
+    migration_empty_site_ok "$target_domain"
+    migration_log INFO "科技 Lion 建站后验证通过；域名=$target_domain；WordPress Root=$target_wp_root；数据库=$DB_NAME；Nginx与证书配置存在；数据库零表=yes"
+    migration_stage_complete '同域名目标站点创建与空数据库验证完成'
+  fi
+
   case "$mode" in
     change-domain)
       [[ "$target_domain" != "$MIGRATION_SOURCE_DOMAIN" ]] || { err '导入并更换域名要求源域名与目标域名不同。'; migration_log ERROR '源域名与目标域名相同。'; return 1; }
@@ -2795,11 +3000,13 @@ migration_preflight() (
       ;;
   esac
 
-  migration_log_finalize_name "$mode" "$MIGRATION_SOURCE_DOMAIN" "$target_domain" || {
-    err '无法整理迁移日志文件名。'
-    migration_log ERROR '无法将迁移日志重命名为包含源域名和目标域名的名称。'
-    return 1
-  }
+  if [[ "$mode" == change-domain ]]; then
+    migration_log_finalize_name "$mode" "$MIGRATION_SOURCE_DOMAIN" "$target_domain" || {
+      err '无法整理迁移日志文件名。'
+      migration_log ERROR '无法将迁移日志重命名为包含源域名和目标域名的名称。'
+      return 1
+    }
+  fi
 
   target_scheme="$(detect_target_scheme "$target_domain")" || { migration_log ERROR '目标 Nginx 协议检查失败。'; return 1; }
   target_url="${target_scheme}://${target_domain}"

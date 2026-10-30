@@ -33,6 +33,9 @@ printf '\nCONFIRM:%s\n' "$confirmation"
 ui_confirm_prompt '请输入 yes 确认删除：'
 ui_read deletion
 printf '\nDELETION:%s\n' "$deletion"
+ui_confirm_prompt '若 DNS 解析完成，请输入 yes：'
+ui_read dns_confirmation
+printf '\nDNS_CONFIRM:%s\n' "$dns_confirmation"
 ui_prompt $'\n已选择目标站点 < target.example > 请输入完整域名确认：'
 ui_read target_confirmation
 printf '\nTARGET_CONFIRM:%s\n' "$target_confirmation"
@@ -61,6 +64,7 @@ try:
     time.sleep(0.1)
     os.write(master, b'yes\x7f\n')
     os.write(master, b'yes\x7f\x7f\n')
+    os.write(master, b'yes\x7f\n')
     os.write(master, 'target.example\x7f\n'.encode())
     while True:
         try:
@@ -83,9 +87,11 @@ assert 'FILE:backup.tar.' in output, output
 assert 'SNAPSHOT:n' in output, output
 assert 'CONFIRM:ye' in output, output
 assert 'DELETION:y' in output, output
+assert 'DNS_CONFIRM:ye' in output, output
 assert 'TARGET_CONFIRM:target.exampl' in output, output
 assert '\x1b[1;92myes\x1b[1;96m 确认：\x1b[1;92m' in output, output
 assert '\x1b[1;92myes\x1b[1;96m 确认删除：\x1b[1;92m' in output, output
+assert '\x1b[1;96m若 DNS 解析完成，请输入 \x1b[1;92myes\x1b[1;96m：\x1b[1;92m' in output, output
 for prompt in [
     '请输入你的选择：',
     '请输入编号，或直接输入域名：',
