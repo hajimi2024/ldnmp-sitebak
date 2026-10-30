@@ -193,7 +193,7 @@ assert_progress_output "$fixture/change-output" yes
 [[ $(< "$fixture/finalize-call") == 'change-domain|old.example|new.example|http://new.example' ]]
 grep -Fq '正在检查备份包' "$fixture/change-output"
 grep -Fq '正在导入目标数据库：target_db' "$fixture/change-output"
-grep -Fq '正在替换目标 WordPress Root' "$fixture/change-output"
+grep -Fq '正在替换目标 WordPress 路径' "$fixture/change-output"
 [[ $(< "$SITE_ROOT/new.example/wordpress/index.php") == source:old.example ]]
 [[ $(parse_migration_wp_define "$SITE_ROOT/new.example/wordpress/wp-config.php" DB_NAME) == target_db ]]
 [[ $(parse_migration_wp_define "$SITE_ROOT/new.example/wordpress/wp-config.php" DB_USER) == target_user ]]
@@ -228,7 +228,7 @@ expect_failure validate_migration_sql_payload "$fixture/forbidden.sql.gz"
 grep -Fq '创建、删除或切换数据库语句' "$fixture/failure-output"
 latest_log="$(find "$MIGRATION_LOG_DIR" -type f -name '*_import-change_*.log' -print -quit)"
 grep -Fq '目标数据库导入完成：target_db' "$latest_log"
-grep -Fq '目标 WordPress Root 导入完成' "$latest_log"
+grep -Fq '目标 WordPress 路径导入完成' "$latest_log"
 grep -Fq '站点导入写入状态；数据库已导入=yes；文件已替换=yes' "$latest_log"
 
 # Keep-domain import permits different servers but requires the same source and target domain.
