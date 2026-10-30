@@ -2,7 +2,7 @@
 
 set -Eeuo pipefail
 
-VERSION="0.7.36"
+VERSION="0.7.37"
 APP_NAME="LDNMP 单站备份恢复工具"
 
 WEB_ROOT="${SITEBAK_WEB_ROOT:-/home/web}"
@@ -1662,6 +1662,21 @@ verify_empty_target_database() {
   fi
 }
 
+wait_for_empty_target_database() {
+  local timeout="${SITEBAK_DB_READY_TIMEOUT:-60}" interval="${SITEBAK_DB_READY_INTERVAL:-2}" elapsed=0
+  while true; do
+    if verify_empty_target_database; then
+      return 0
+    fi
+    (( elapsed >= timeout )) && break
+    migration_stage_status "目标数据库尚未就绪，${interval} 秒后重试（已等待 ${elapsed}/${timeout} 秒）"
+    sleep "$interval"
+    (( elapsed += interval ))
+  done
+  err "目标数据库在 ${timeout} 秒内未就绪。"
+  return 1
+}
+
 classify_nginx_domain_blocks() {
   local file="$1" domain="$2"
   awk -v domain="$domain" '
@@ -3034,7 +3049,7 @@ migration_preflight() (
     target_db_password="$DB_PASSWORD"
     target_db_host="$DB_HOST"
     migration_stage_status "正在检查同域名目标数据库是否为空：$DB_NAME"
-    verify_empty_target_database || { migration_log ERROR "建站后目标数据库空库检查失败；目标数据库=$DB_NAME"; return 1; }
+    wait_for_empty_target_database || { migration_log ERROR "建站后目标数据库空库检查失败；目标数据库=$DB_NAME"; return 1; }
     migration_empty_site_ok "$target_domain"
     migration_log INFO "科技 Lion 建站后验证通过；域名=$target_domain；WordPress Root=$target_wp_root；数据库=$DB_NAME；Nginx与证书配置存在；数据库零表=yes"
     migration_stage_complete '同域名目标站点创建与空数据库验证完成'

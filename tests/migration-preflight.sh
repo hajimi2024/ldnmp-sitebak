@@ -2,6 +2,7 @@
 set -Eeuo pipefail
 export NO_COLOR=1
 export SITEBAK_PUBLIC_IPV4=203.0.113.10
+export SITEBAK_DB_READY_TIMEOUT=0
 source "$(dirname "$0")/../sitebak.sh"
 
 fixture="$(mktemp -d)"
