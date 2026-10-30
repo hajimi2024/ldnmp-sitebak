@@ -2,7 +2,7 @@
 
 set -Eeuo pipefail
 
-VERSION="0.7.20"
+VERSION="0.7.21"
 APP_NAME="LDNMP 单站备份恢复工具"
 
 WEB_ROOT="${SITEBAK_WEB_ROOT:-/home/web}"
@@ -107,6 +107,15 @@ ui_prompt() {
   # 否则中文提示后的退格会把已经显示的提示一起重绘掉。
   if [[ ! -t 0 ]]; then
     printf '%s%s%s' "$BOLD" "$1" "$NUMBER"
+  fi
+}
+ui_green_input_prompt() {
+  UI_PENDING_PROMPT="$1"
+  UI_PENDING_INPUT_COLOR="$CONFIRM_GREEN"
+  UI_PENDING_CONFIRM=no
+  UI_PENDING_HIGHLIGHT=''
+  if [[ ! -t 0 ]]; then
+    printf '%s%s%s' "$BOLD" "$1" "$CONFIRM_GREEN"
   fi
 }
 ui_highlight_prompt() {
@@ -781,7 +790,7 @@ select_existing_domain() {
     fi
     render_return_section >&2
 
-    ui_prompt '请输入目标站点编号或域名：' >&2
+    ui_green_input_prompt '请输入目标站点编号或域名：' >&2
     ui_read choice 2 || return 1
     [[ "$choice" == 0 ]] && return 1
     if [[ "$choice" =~ ^[0-9]{1,9}$ ]]; then
@@ -814,6 +823,11 @@ select_existing_domain() {
       warn '目标域名不在当前站点列表中，请重新选择。' >&2
     fi
   done
+}
+
+migration_empty_site_ok() {
+  local domain="$1"
+  ok "✅ 已验证目标站点 ${CONFIRM_GREEN}< ${domain} >${GREEN} 为空站点，允许继续导入。"
 }
 
 confirm_numeric_target_domain() {
@@ -2745,7 +2759,7 @@ migration_preflight() (
   target_db_host="$DB_HOST"
   migration_stage_status "正在检查目标数据库是否为空：$DB_NAME"
   verify_empty_target_database || { migration_log ERROR "目标数据库空库检查失败；目标数据库=$DB_NAME"; return 1; }
-  ok "✅ 已验证目标站点 < ${target_domain} > 为空站点，允许继续导入。"
+  migration_empty_site_ok "$target_domain"
   migration_log INFO "已验证目标站点为空站点；域名=$target_domain；数据库=$DB_NAME"
   migration_stage_complete "目标站点与空数据库验证完成"
 

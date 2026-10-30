@@ -39,6 +39,10 @@ archive="$(select_backup example.com backup < <(printf '1\n'))"
 printf '\nSELECTED_ARCHIVE:%s\n' "$archive"
 confirm_target_operation change-domain old.example https://old.example new.example https://new.example server user /target/root target_db /backup.tar.gz < <(printf '\n') || :
 confirm_numeric_target_domain new.example < <(printf 'new.example\n')
+ui_green_input_prompt '请输入目标站点编号或域名：'
+ui_read green_domain < <(printf 'new.example\n')
+printf '\n'
+migration_empty_site_ok new.example
 '''
 
 def run(terminal=False, **changes):
@@ -80,7 +84,7 @@ for number in range(9):
 for label in ['版本：', '备份目录：', '快照目录：', '日志目录：', '备注：']:
     assert '\x1b[1;33m' + label + '\x1b[0;92m' in colored
 assert '\x1b[1;33m当前服务器：\x1b[1;35m' in colored
-for value in ['0.7.20', fixture + '/backups', '/home/sitebak-logs', 'snapshot']:
+for value in ['0.7.21', fixture + '/backups', '/home/sitebak-logs', 'snapshot']:
     assert '\x1b[0;92m' + value + '\x1b[0m' in colored
 assert '\x1b[0;92m' + fixture + '/html' + '\x1b[0m' not in colored
 assert '\x1b[1;35m@' in colored
@@ -104,6 +108,9 @@ assert ('\x1b[0;31m🚨 警告：即将为 \x1b[1;92m< new.example >'
         '\x1b[0;31m 注入站点文件 & 数据库。\x1b[0m') in colored
 assert ('\x1b[1;96m\n已选择目标站点 \x1b[1;92m< new.example >'
         '\x1b[1;96m 请输入完整域名确认：') in colored
+assert '\x1b[1;96m请输入目标站点编号或域名：\x1b[1;92m' in colored
+assert ('\x1b[0;32m[OK] ✅ 已验证目标站点 \x1b[1;92m< new.example >'
+        '\x1b[0;32m 为空站点，允许继续导入。\x1b[0m') in colored
 assert run(terminal=True, NO_COLOR='1') == plain
 assert run(terminal=True, TERM='dumb') == plain
 assert '\nSELECTED_SITE:example.com\n' in colored
