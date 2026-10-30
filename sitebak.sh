@@ -2,7 +2,7 @@
 
 set -Eeuo pipefail
 
-VERSION="0.7.19"
+VERSION="0.7.20"
 APP_NAME="LDNMP 单站备份恢复工具"
 
 WEB_ROOT="${SITEBAK_WEB_ROOT:-/home/web}"
@@ -38,6 +38,7 @@ DB_CLIENT_ANNOUNCED=''
 UI_PENDING_PROMPT=''
 UI_PENDING_INPUT_COLOR=''
 UI_PENDING_CONFIRM=no
+UI_PENDING_HIGHLIGHT=''
 
 NGINX_CONF_DIRS=(
   "$WEB_ROOT/conf.d"
@@ -101,16 +102,30 @@ ui_prompt() {
   UI_PENDING_PROMPT="$1"
   UI_PENDING_INPUT_COLOR="$NUMBER"
   UI_PENDING_CONFIRM=no
+  UI_PENDING_HIGHLIGHT=''
   # 交互终端把完整提示交给 Readline，让它知道提示文本的实际宽度；
   # 否则中文提示后的退格会把已经显示的提示一起重绘掉。
   if [[ ! -t 0 ]]; then
     printf '%s%s%s' "$BOLD" "$1" "$NUMBER"
   fi
 }
+ui_highlight_prompt() {
+  local prompt="$1" highlight="$2" prefix suffix
+  UI_PENDING_PROMPT="$prompt"
+  UI_PENDING_INPUT_COLOR="$CONFIRM_GREEN"
+  UI_PENDING_CONFIRM=no
+  UI_PENDING_HIGHLIGHT="$highlight"
+  if [[ ! -t 0 ]]; then
+    prefix="${prompt%%"$highlight"*}"
+    suffix="${prompt#*"$highlight"}"
+    printf '%s%s%s%s%s%s' "$BOLD" "$prefix" "$CONFIRM_GREEN" "$highlight" "$BOLD" "$suffix"
+  fi
+}
 ui_confirm_prompt() {
   UI_PENDING_PROMPT="$1"
   UI_PENDING_INPUT_COLOR="$CONFIRM_GREEN"
   UI_PENDING_CONFIRM=yes
+  UI_PENDING_HIGHLIGHT=''
   if [[ ! -t 0 ]]; then
     local prefix="${1%%yes*}" suffix="${1#*yes}"
     printf '%s%s%s%s%s%s%s' "$BOLD" "$prefix" "$CONFIRM_GREEN" 'yes' "$BOLD" "$suffix" "$CONFIRM_GREEN"
@@ -331,16 +346,21 @@ ui_read() {
   local variable="$1" output_fd="${2:-1}" status
   local prompt="${UI_PENDING_PROMPT:-}" input_color="${UI_PENDING_INPUT_COLOR:-$NUMBER}"
   local is_confirm="${UI_PENDING_CONFIRM:-no}"
+  local highlight="${UI_PENDING_HIGHLIGHT:-}"
   UI_PENDING_PROMPT=''
   UI_PENDING_INPUT_COLOR=''
   UI_PENDING_CONFIRM=no
+  UI_PENDING_HIGHLIGHT=''
   # 交互终端使用 Readline 处理 UTF-8 宽字符，并把提示作为 -p 参数传入；
   # 这样 Readline 能正确计算中文提示宽度，退格只会删除用户输入。
   if [[ -t 0 ]]; then
     local readline_prompt
     if [[ -n "$RESET" ]]; then
       # \001/\002 标记 ANSI 控制序列为不可见字符，避免光标定位偏移。
-      if [[ "$is_confirm" == yes && "$prompt" == *yes* ]]; then
+      if [[ -n "$highlight" && "$prompt" == *"$highlight"* ]]; then
+        local prefix="${prompt%%"$highlight"*}" suffix="${prompt#*"$highlight"}"
+        readline_prompt=$'\001'"$BOLD"$'\002'"$prefix"$'\001'"$CONFIRM_GREEN"$'\002'"$highlight"$'\001'"$BOLD"$'\002'"$suffix"$'\001'"$input_color"$'\002'
+      elif [[ "$is_confirm" == yes && "$prompt" == *yes* ]]; then
         local prefix="${prompt%%yes*}" suffix="${prompt#*yes}"
         readline_prompt=$'\001'"$BOLD"$'\002'"$prefix"$'\001'"$CONFIRM_GREEN"$'\002'yes$'\001'"$BOLD"$'\002'"$suffix"$'\001'"$input_color"$'\002'
       else
@@ -799,7 +819,7 @@ select_existing_domain() {
 confirm_numeric_target_domain() {
   local expected_domain="$1" confirmation
   while true; do
-    ui_prompt $'\n已选择目标站点 < '"${expected_domain}"$' > 请输入完整域名确认：'
+    ui_highlight_prompt $'\n已选择目标站点 < '"${expected_domain}"$' > 请输入完整域名确认：' "< ${expected_domain} >"
     ui_read confirmation 2 || return 1
     case "$confirmation" in
       "$expected_domain") return 0 ;;
