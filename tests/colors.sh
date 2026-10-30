@@ -87,7 +87,7 @@ for number in range(9):
 for label in ['版本：', '备份目录：', '快照目录：', '日志目录：', '备注：']:
     assert '\x1b[1;33m' + label + '\x1b[0;92m' in colored
 assert '\x1b[1;33m当前服务器：\x1b[1;35m' in colored
-for value in ['0.7.26', fixture + '/backups', '/home/sitebak-logs', 'snapshot']:
+for value in ['0.7.27', fixture + '/backups', '/home/sitebak-logs', 'snapshot']:
     assert '\x1b[0;92m' + value + '\x1b[0m' in colored
 assert '\x1b[0;92m' + fixture + '/html' + '\x1b[0m' not in colored
 assert '\x1b[1;35m@' in colored
@@ -134,6 +134,7 @@ narrow = ansi.sub('', run(terminal=True, COLUMNS='32'))
 assert '\nLDNMP\n----------------\n单站备份恢复工具\n----------------\n' in narrow
 assert '1.  列出 WordPress 站点\n2.  备份单个站点' in narrow
 assert '2.  备份单个站点\n\n3.  查看备份文件' in narrow
-assert '8.  站点导入 ♻️' in narrow
+assert '7.  更新脚本   ♻️' in narrow
+assert '8.  站点导入   📁' in narrow
 PY
 printf 'PASS: terminal colors, resets, plain-output fallback, column alignment and clean selection values\n'
