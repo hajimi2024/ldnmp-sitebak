@@ -2,7 +2,7 @@
 
 set -Eeuo pipefail
 
-VERSION="0.7.29"
+VERSION="0.7.30"
 APP_NAME="LDNMP 单站备份恢复工具"
 
 WEB_ROOT="${SITEBAK_WEB_ROOT:-/home/web}"
@@ -2092,8 +2092,8 @@ operation_type_label() {
   case "$1" in
     restore) printf '站点还原' ;;
     snapshot-restore) printf '完整快照还原' ;;
-    change-domain) printf '导入并更换域名' ;;
-    keep-domain) printf '导入并保留域名' ;;
+    change-domain) printf '8.1 导入并更换域名' ;;
+    keep-domain) printf '8.2 导入并保留域名' ;;
     *) return 1 ;;
   esac
 }

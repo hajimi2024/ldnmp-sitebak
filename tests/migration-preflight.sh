@@ -163,7 +163,7 @@ grep -Fq '目标域名：https://target.example' "$fixture/change-output"
 grep -Fq '目标服务器：@target-vps 2c4g' "$fixture/change-output"
 ! grep -Fq 'machine:0123456789abcdef' "$fixture/change-output"
 ! grep -Fq 'fixture-user' "$fixture/change-output"
-grep -Fq '操作类型：导入并更换域名' "$fixture/change-output"
+grep -Fq '操作类型：8.1 导入并更换域名' "$fixture/change-output"
 diff -r "$fixture/target-before" "$SITE_ROOT/target.example"
 diff -r "$fixture/unrelated-before" "$SITE_ROOT/zzz.example"
 [[ -z "$(find "$MIGRATION_TMP_ROOT" -mindepth 1 -print -quit)" ]]

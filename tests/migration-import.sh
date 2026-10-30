@@ -247,7 +247,7 @@ if ! migration_preflight keep-domain < <(printf '%s\n' 1 yes yes) > "$fixture/ke
   cat "$fixture/keep-output" >&2
   exit 1
 fi
-grep -Fq '操作类型：导入并保留域名' "$fixture/keep-output"
+grep -Fq '操作类型：8.2 导入并保留域名' "$fixture/keep-output"
 ! grep -Fq '请选择已预建的空 WordPress 目标站点' "$fixture/keep-output"
 grep -Fq '请将 < same.example > 的 DNS 解析到当前服务器' "$fixture/keep-output"
 grep -Fq 'IPv4：203.0.113.10' "$fixture/keep-output"
