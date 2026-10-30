@@ -2,7 +2,7 @@
 
 set -Eeuo pipefail
 
-VERSION="0.7.34"
+VERSION="0.7.35"
 APP_NAME="LDNMP 单站备份恢复工具"
 
 WEB_ROOT="${SITEBAK_WEB_ROOT:-/home/web}"
@@ -2119,14 +2119,19 @@ operation_type_label() {
 
 confirm_target_operation() {
   local operation="$1" source_domain="$2" source_url="$3" target_domain="$4" target_url="$5" server_identity="$6" server_username="$7"
-  local target_root="$8" database_name="$9" archive="${10}" confirm server_display
+  local target_root="$8" database_name="$9" archive="${10}" confirm server_display server_ipv4
   server_display="$(get_target_server_display)" || return 1
+  server_ipv4="$(get_public_ipv4 2>/dev/null || true)"
   header
   printf '%s即将执行站点操作，请核对：%s\n\n' "$BOLD" "$RESET"
   printf '%s操作类型：%s%s%s\n' "$NUMBER" "$BLUE" "$(operation_type_label "$operation")" "$RESET"
   printf '%s源站域名：%s%s%s\n' "$NUMBER" "$BLUE" "$source_url" "$RESET"
   printf '%s目标域名：%s%s%s\n' "$NUMBER" "$BLUE" "$target_url" "$RESET"
-  printf '%s目标服务器：%s%s%s\n' "$NUMBER" "$PURPLE" "$server_display" "$RESET"
+  if [[ -n "$server_ipv4" ]]; then
+    printf '%s目标服务器：%s%s%s  %sIPv4：%s%s%s\n' "$NUMBER" "$PURPLE" "$server_display" "$RESET" "$NUMBER" "$LIGHT_GREEN" "$server_ipv4" "$RESET"
+  else
+    printf '%s目标服务器：%s%s%s\n' "$NUMBER" "$PURPLE" "$server_display" "$RESET"
+  fi
   printf '%s目标 WordPress 路径：%s%s%s\n' "$NUMBER" "$BLUE" "$target_root" "$RESET"
   printf '%s目标数据库：%s%s%s\n' "$NUMBER" "$BLUE" "$database_name" "$RESET"
   printf '%s备份文件：%s%s%s\n\n' "$NUMBER" "$BLUE" "${archive##*/}" "$RESET"
