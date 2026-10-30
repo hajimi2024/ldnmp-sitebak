@@ -2,7 +2,7 @@
 
 set -Eeuo pipefail
 
-VERSION="0.7.42"
+VERSION="0.7.43"
 APP_NAME="LDNMP 单站备份恢复工具"
 
 WEB_ROOT="${SITEBAK_WEB_ROOT:-/home/web}"
@@ -1003,7 +1003,11 @@ prepare_db_client() {
   fi
   local backend="${DB_CONTAINER:-本机}|$DB_CLIENT"
   if [[ "$DB_CLIENT_ANNOUNCED" != "$backend" ]]; then
-    info "已连接数据库服务：${DB_CONTAINER:-本机}" >&2
+    if [[ "$MIGRATION_STAGE_ACTIVE" == yes ]]; then
+      [[ -z "${MIGRATION_LOG_FILE:-}" ]] || migration_log INFO "已连接数据库服务：${DB_CONTAINER:-本机}"
+    else
+      info "已连接数据库服务：${DB_CONTAINER:-本机}" >&2
+    fi
     DB_CLIENT_ANNOUNCED="$backend"
   fi
 }
