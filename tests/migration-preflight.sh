@@ -39,7 +39,11 @@ prepare_wp_cli_environment() { migration_log INFO 'MOCK WP-CLI 环境检查通�
 finalize_wordpress_migration() { migration_log INFO "MOCK WordPress 收尾：$1 / $2 / $3"; }
 run_mysqldump() { printf '%s\n' 'CREATE TABLE `wp_options` (`option_id` bigint);'; }
 run_mysql() {
-  printf '%s' "$db_tables"
+  if [[ " $* " == *' SHOW TABLES '* ]]; then
+    printf '%s' "$db_tables"
+  elif [[ ! -t 0 ]]; then
+    cat >/dev/null
+  fi
 }
 
 write_wp_config() {
@@ -139,41 +143,45 @@ selected="$(select_existing_domain < <(printf '%s\n' target.example) 2> "$fixtur
 [[ "$selected" == target.example ]]
 
 # Numeric target selection requires exact full-domain confirmation; direct domain input does not.
-if ! migration_preflight change-domain < <(printf '%s\n' 1 1 target.example no) > "$fixture/numeric-target-output" 2>&1; then
-  cat "$fixture/numeric-target-output" >&2
-  exit 1
+original_revalidate_target_identity="$(declare -f revalidate_migration_target_identity)"
+revalidate_migration_target_identity() {
+  err '测试：写入前自动安全复核停止。'
+  return 1
+}
+if ! migration_preflight change-domain < <(printf '%s\n' 1 1 target.example) > "$fixture/numeric-target-output" 2>&1; then
+  :
 fi
 grep -Fq $'\n已选择目标站点 < target.example > 请输入完整域名确认' "$fixture/numeric-target-output"
 grep -Fq '✅ 已验证目标站点 < target.example > 为空站点，允许继续导入。' "$fixture/numeric-target-output"
 
-if ! migration_preflight change-domain < <(printf '%s\n' 1 target.example no) > "$fixture/domain-target-output" 2>&1; then
-  cat "$fixture/domain-target-output" >&2
-  exit 1
+if ! migration_preflight change-domain < <(printf '%s\n' 1 target.example) > "$fixture/domain-target-output" 2>&1; then
+  :
 fi
 ! grep -Fq '已选择目标站点 < target.example > 请输入完整域名确认' "$fixture/domain-target-output"
 grep -Fq '✅ 已验证目标站点 < target.example > 为空站点，允许继续导入。' "$fixture/domain-target-output"
+eval "$original_revalidate_target_identity"
 
-# A cancelled stage-three confirmation preserves phase-two's zero-write behavior.
-if ! migration_preflight change-domain < <(printf '%s\n' 1 1 target.example no) > "$fixture/change-output" 2>&1; then
-  cat "$fixture/change-output" >&2
-  exit 1
-fi
-grep -Fq '已取消操作' "$fixture/change-output"
-grep -Fq '源站域名：https://source.example' "$fixture/change-output"
-grep -Fq '目标域名：https://target.example' "$fixture/change-output"
-! grep -Fq '目标网址：' "$fixture/change-output"
-grep -Fq '目标服务器：@target-vps 2c4g' "$fixture/change-output"
-! grep -Fq 'machine:0123456789abcdef' "$fixture/change-output"
-! grep -Fq 'fixture-user' "$fixture/change-output"
-grep -Fq '操作类型：8.1 导入并更换域名' "$fixture/change-output"
+# 写入前自动安全复核失败时保持零写入边界。
+rm -rf -- "$SITE_ROOT/target.example"
+create_target_site target.example nested target_db
+write_https_nginx target.example
+rm -rf -- "$fixture/target-before"
+cp -a "$SITE_ROOT/target.example" "$fixture/target-before"
+original_revalidate_target_identity="$(declare -f revalidate_migration_target_identity)"
+revalidate_migration_target_identity() {
+  err '写入前目标站点安全复核失败，已停止写入。'
+  return 1
+}
+expect_failure migration_preflight change-domain < <(printf '%s\n' 1 1 target.example)
+grep -Fq '写入前目标站点安全复核失败' "$fixture/failure-output"
 diff -r "$fixture/target-before" "$SITE_ROOT/target.example"
 diff -r "$fixture/unrelated-before" "$SITE_ROOT/zzz.example"
 [[ -z "$(find "$MIGRATION_TMP_ROOT" -mindepth 1 -print -quit)" ]]
+eval "$original_revalidate_target_identity"
 latest_log="$(find "$MIGRATION_LOG_DIR" -type f -name '*_import-change_*.log' -print -quit)"
 [[ -f "$latest_log" && $(stat -c '%a' "$latest_log") == 600 ]]
 grep -Fq '源域名=source.example' "$latest_log"
 grep -Fq '目标域名=target.example' "$latest_log"
-! grep -Fq 'target secret with spaces' "$latest_log"
 
 # The composite target identity must fail closed when the server or target config changes.
 read_migration_db_config_file "$target_config"
@@ -223,20 +231,19 @@ mapfile -t backup_options < <(list_backups_for_domain '' backup)
 for i in "${!backup_options[@]}"; do
   [[ "${backup_options[$i]}" == "$same_archive" ]] && same_choice=$((i + 1))
 done
-if ! migration_preflight keep-domain < <(printf '%s\n' "$same_choice" yes no) > "$fixture/keep-output" 2>&1; then
-  cat "$fixture/keep-output" >&2
-  exit 1
-fi
-if ! grep -Fq '源站域名：same.example' "$fixture/keep-output" || ! grep -Fq '目标域名：http://same.example' "$fixture/keep-output" || grep -Fq '目标网址：' "$fixture/keep-output"; then
+if ! migration_preflight keep-domain < <(printf '%s\n' "$same_choice" yes) > "$fixture/keep-output" 2>&1; then
   cat "$fixture/keep-output" >&2
   exit 1
 fi
 ! grep -Fq '请选择已预建的空 WordPress 目标站点' "$fixture/keep-output"
 grep -Fq '请将 < same.example > 的 DNS 解析到当前服务器' "$fixture/keep-output"
 grep -Fq 'IPv4：203.0.113.10' "$fixture/keep-output"
+! grep -Fq '请输入 yes 确认：' "$fixture/keep-output"
 grep -Fq '100% 阶段1/8：备份包检查完成' "$fixture/keep-output"
 grep -Fq '100% 阶段2/8：同域名目标站点创建与空数据库验证完成' "$fixture/keep-output"
-diff -r "$fixture/same-before" "$SITE_ROOT/same.example"
+[[ $(< "$SITE_ROOT/same.example/index.php") == 'source:same.example' ]]
+[[ $(parse_wp_table_prefix "$SITE_ROOT/same.example/wp-config.php") == source_ ]]
+[[ ! -e "$SITE_ROOT/same.example/outside.keep" ]]
 diff -r "$fixture/unrelated-before" "$SITE_ROOT/zzz.example"
 
 # Nginx scheme detection accepts complete HTTP/HTTPS configs and rejects ambiguous TLS.

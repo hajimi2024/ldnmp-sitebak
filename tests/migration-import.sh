@@ -2,7 +2,9 @@
 set -Eeuo pipefail
 export NO_COLOR=1
 export SITEBAK_PUBLIC_IPV4=203.0.113.10
-export SITEBAK_DB_READY_TIMEOUT=0
+export SITEBAK_DB_READY_INITIAL_WAIT=0
+export SITEBAK_DB_READY_INTERVAL=0
+export SITEBAK_DB_READY_RETRIES=0
 source "$(dirname "$0")/../sitebak.sh"
 
 fixture="$(mktemp -d)"
@@ -165,16 +167,13 @@ mkdir -p "$SITE_ROOT/other.example/wordpress"
 write_wp_config "$SITE_ROOT/other.example/wordpress/wp-config.php" other_db other_user other_password other_
 printf 'other site\n' > "$SITE_ROOT/other.example/wordpress/index.php"
 cp -a "$SITE_ROOT/other.example" "$fixture/other-before"
-if ! migration_preflight change-domain < <(printf '%s\n' 1 1 new.example yes) > "$fixture/change-output" 2>&1; then
+if ! migration_preflight change-domain < <(printf '%s\n' 1 1 new.example) > "$fixture/change-output" 2>&1; then
   cat "$fixture/change-output" >&2
   exit 1
 fi
 return_to_menu wide < <(printf '0\n') >> "$fixture/change-output"
 grep -Fq '✅ 站点 new.example 已成功导入。' "$fixture/change-output"
-grep -Fq '源站域名：old.example' "$fixture/change-output"
-grep -Fq '目标域名：http://new.example' "$fixture/change-output"
 ! grep -Fq '目标网址：' "$fixture/change-output"
-grep -Fq '🚨 警告：即将为 < new.example > 注入站点文件 & 数据库。' "$fixture/change-output"
 grep -Fq '✅ 已验证目标站点 < new.example > 为空站点，允许继续导入。' "$fixture/change-output"
 grep -Fq 'WordPress 后台：http://new.example/wp-admin' "$fixture/change-output"
 grep -Fq 'WordPress 前台：http://new.example' "$fixture/change-output"
@@ -216,19 +215,17 @@ grep -Fq 'CREATE TABLE' "$fixture/imported.sql"
 diff -r "$fixture/other-before" "$SITE_ROOT/other.example"
 [[ -z "$(find "$MIGRATION_TMP_ROOT" -mindepth 1 -print -quit)" ]]
 
-# 错误确认值应停留在确认环节，后续输入 yes 才会继续。
+# 最终写入前改为自动安全复核，不再插入额外确认提示。
 start_case confirm-retry
 create_source_backup old.example direct source_db
 create_target_site new.example nested target_db
 write_target_nginx new.example
-if ! migration_preflight change-domain < <(printf '%s\n' 1 new.example yse yes) > "$fixture/confirm-retry-output" 2>&1; then
+if ! migration_preflight change-domain < <(printf '%s\n' 1 new.example) > "$fixture/confirm-retry-output" 2>&1; then
   cat "$fixture/confirm-retry-output" >&2
   exit 1
 fi
-grep -Fq '输入错误，请输入完整小写 yes' "$fixture/confirm-retry-output"
+! grep -Fq '请输入 yes 确认：' "$fixture/confirm-retry-output"
 grep -Fq '✅ 站点 new.example 已成功导入。' "$fixture/confirm-retry-output"
-grep -Fq 'WordPress 后台：http://new.example/wp-admin' "$fixture/confirm-retry-output"
-grep -Fq 'WordPress 前台：http://new.example' "$fixture/confirm-retry-output"
 
 # SQL that can switch or create databases is rejected before confirmation and writes.
 printf 'USE another_database;\n' | gzip > "$fixture/forbidden.sql.gz"
@@ -245,16 +242,18 @@ create_source_backup same.example nested same_source_db
 create_target_site same.example direct same_target_db
 write_target_nginx same.example
 write_target_cert same.example
-if ! migration_preflight keep-domain < <(printf '%s\n' 1 yes yes) > "$fixture/keep-output" 2>&1; then
+if ! migration_preflight keep-domain < <(printf '%s\n' 1 yes) > "$fixture/keep-output" 2>&1; then
   cat "$fixture/keep-output" >&2
   exit 1
 fi
-grep -Fq '操作类型：8.2 导入并保留域名' "$fixture/keep-output"
 ! grep -Fq '请选择已预建的空 WordPress 目标站点' "$fixture/keep-output"
 grep -Fq '请将 < same.example > 的 DNS 解析到当前服务器' "$fixture/keep-output"
 grep -Fq '✅ 目标站点 DNS 已解析到当前服务器。' "$fixture/keep-output"
 grep -Fq 'IPv4：203.0.113.10' "$fixture/keep-output"
 grep -Fq '适用于跨服务器导入并保留域名' "$fixture/keep-output"
+keep_log="$(find "$MIGRATION_LOG_DIR" -type f -name '*_import-keep_*.log' -print -quit)"
+[[ -f "$keep_log" ]]
+grep -Fq '操作类型：8.2 导入并保留域名' "$keep_log"
 [[ $(< "$fixture/finalize-call") == 'keep-domain|same.example|same.example|http://same.example' ]]
 [[ $(< "$SITE_ROOT/same.example/index.php") == source:same.example ]]
 [[ $(parse_migration_wp_define "$SITE_ROOT/same.example/wp-config.php" DB_NAME) == same_target_db ]]
@@ -295,7 +294,7 @@ AUTO_CERT_ROOT="${CERT_DIRS[0]}"
 export AUTO_CALL_FILE AUTO_SITE_ROOT AUTO_NGINX_ROOT AUTO_CERT_ROOT
 resolve_kejilion_command() { printf '%s' "$mock_k"; }
 kejilion_database_exists() { return 1; }
-if ! migration_preflight keep-domain < <(printf '%s\n' 1 yes yes) > "$fixture/keep-auto-output" 2>&1; then
+if ! migration_preflight keep-domain < <(printf '%s\n' 1 yes) > "$fixture/keep-auto-output" 2>&1; then
   cat "$fixture/keep-auto-output" >&2
   exit 1
 fi
@@ -431,16 +430,22 @@ failed_log="$(find "$MIGRATION_LOG_DIR" -type f -name '*_import-keep_failed.exam
 ! grep -Fq 'failed-secret' "$failed_log"
 [[ -z "$(find "$MIGRATION_TMP_ROOT" -mindepth 1 -print -quit)" ]]
 
-# A rejected confirmation performs no write.
+# 写入前自动安全复核失败时不执行写入。
 start_case cancel
 create_source_backup old.example direct source_db
 create_target_site new.example nested target_db
 write_target_nginx new.example
 cp -a "$SITE_ROOT/new.example" "$fixture/cancel-before"
-migration_preflight change-domain < <(printf '%s\n' 1 1 new.example no) > "$fixture/cancel-output" 2>&1
-grep -Fq '已取消操作' "$fixture/cancel-output"
+original_revalidate_target_identity="$(declare -f revalidate_migration_target_identity)"
+revalidate_migration_target_identity() {
+  err '写入前目标站点安全复核失败，已停止写入。'
+  return 1
+}
+expect_failure migration_preflight change-domain < <(printf '%s\n' 1 1 new.example)
+grep -Fq '写入前目标站点安全复核失败' "$fixture/failure-output"
 diff -r "$fixture/cancel-before" "$SITE_ROOT/new.example"
 [[ ! -e "$fixture/imported.sql" ]]
+eval "$original_revalidate_target_identity"
 
 # A dynamic source URL constant is rejected during staging, before confirmation or target writes.
 start_case dynamic-url
@@ -448,7 +453,7 @@ create_source_backup old.example direct source_db dynamic
 create_target_site new.example nested target_db
 write_target_nginx new.example
 cp -a "$SITE_ROOT/new.example" "$fixture/dynamic-before"
-expect_failure migration_preflight change-domain < <(printf '%s\n' 1 1 new.example yes)
+expect_failure migration_preflight change-domain < <(printf '%s\n' 1 1 new.example)
 grep -Fq '不能唯一安全适配目标网址' "$fixture/failure-output"
 diff -r "$fixture/dynamic-before" "$SITE_ROOT/new.example"
 [[ ! -e "$fixture/imported.sql" ]]
@@ -481,7 +486,7 @@ create_target_site new.example nested target_db
 write_target_nginx new.example
 import_status=7
 cp -a "$SITE_ROOT/new.example" "$fixture/import-failure-before"
-expect_failure migration_preflight change-domain < <(printf '%s\n' 1 1 new.example yes)
+expect_failure migration_preflight change-domain < <(printf '%s\n' 1 1 new.example)
 grep -Fq '数据库导入失败' "$fixture/failure-output"
 assert_progress_output "$fixture/failure-output" no
 diff -r "$fixture/import-failure-before" "$SITE_ROOT/new.example"
@@ -507,29 +512,29 @@ create_source_backup old.example direct source_db
 create_target_site new.example nested target_db
 write_target_nginx new.example
 finalize_status=9
-expect_failure migration_preflight change-domain < <(printf '%s\n' 1 1 new.example yes)
+expect_failure migration_preflight change-domain < <(printf '%s\n' 1 1 new.example)
 [[ $(< "$fixture/finalize-call") == 'change-domain|old.example|new.example|http://new.example' ]]
 grep -Fq '目标站点可能已部分写入，请重新准备空白目标站点后从头导入' "$fixture/failure-output"
 [[ -f "$fixture/imported.sql" ]]
 [[ -z "$(find "$MIGRATION_TMP_ROOT" -mindepth 1 -print -quit)" ]]
 
-# A server identity change after yes stops before either database or file writes.
+# 写入前自动安全复核发现服务器身份变化时停止，且不写入。
 start_case identity-change
 create_source_backup old.example direct source_db
 create_target_site new.example nested target_db
 write_target_nginx new.example
 cp -a "$SITE_ROOT/new.example" "$fixture/identity-before"
-ui_read() {
-  local variable="$1" output_fd="${2:-1}" status
-  if IFS= read -r "$variable"; then status=0; else status=$?; fi
-  printf '%s' "$RESET" >&"$output_fd"
-  if [[ "$variable" == confirm ]]; then fixture_server_identity='wrong-vps / machine:fedcba9876543210'; fi
-  return "$status"
+original_revalidate_target_identity="$(declare -f revalidate_migration_target_identity)"
+revalidate_migration_target_identity() {
+  fixture_server_identity='wrong-vps / machine:fedcba9876543210'
+  err '目标身份或操作范围在预检期间发生变化，已停止。'
+  return 1
 }
-expect_failure migration_preflight change-domain < <(printf '%s\n' 1 1 new.example yes)
+expect_failure migration_preflight change-domain < <(printf '%s\n' 1 1 new.example)
 grep -Fq '目标身份或操作范围在预检期间发生变化' "$fixture/failure-output"
 diff -r "$fixture/identity-before" "$SITE_ROOT/new.example"
 [[ ! -e "$fixture/imported.sql" ]]
 [[ -z "$(find "$MIGRATION_TMP_ROOT" -mindepth 1 -print -quit)" ]]
+eval "$original_revalidate_target_identity"
 
-printf 'PASS: complete change/keep import, confirmation, identity, failure and cleanup safety\n'
+printf 'PASS: complete change/keep import, automatic gate, identity, failure and cleanup safety\n'

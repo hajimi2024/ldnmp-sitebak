@@ -2,7 +2,7 @@
 
 set -Eeuo pipefail
 
-VERSION="0.7.47"
+VERSION="0.7.48"
 APP_NAME="LDNMP 单站备份恢复工具"
 
 WEB_ROOT="${SITEBAK_WEB_ROOT:-/home/web}"
@@ -2227,6 +2227,26 @@ confirm_target_operation() {
   done
 }
 
+final_migration_write_gate() {
+  local target_domain="$1" locked_identity="$2" migration_prefix="$3" archive="$4" archive_sha256="$5" current_sha256
+  current_sha256="$(sha256sum "$archive" | awk '{print $1}')" || {
+    err '无法重新读取备份文件指纹，已停止写入。'
+    migration_log ERROR '写入前无法读取备份文件指纹。'
+    return 1
+  }
+  [[ "$current_sha256" == "$archive_sha256" ]] || {
+    err '写入前备份文件指纹发生变化，已停止写入。'
+    migration_log ERROR '写入前备份指纹变化。'
+    return 1
+  }
+  revalidate_migration_target_identity "$target_domain" "$locked_identity" "$migration_prefix" || {
+    err '写入前目标站点安全复核失败，已停止写入。'
+    migration_log ERROR '写入前目标身份、范围或空数据库复核失败。'
+    return 1
+  }
+  migration_log INFO "写入前自动安全复核通过；目标域名=$target_domain；数据库=$MIGRATION_TARGET_DB_NAME；备份指纹未变化；目标数据库仍为空。"
+}
+
 validate_migration_sql_payload() {
   local sql_file="$1"
   [[ -f "$sql_file" ]] || { err '缺少待导入的 SQL 文件。'; return 1; }
@@ -3038,7 +3058,7 @@ migration_preflight() (
     migration_log_finish "$status"
   ' EXIT
 
-  migration_log INFO '开始站点导入：先执行安全预检和暂存，确认后才写入目标数据库和 WordPress Root。'
+  migration_log INFO '开始站点导入：先执行安全预检和暂存，写入前自动复核通过后才写入目标数据库和 WordPress Root。'
   need_cmd tar gzip awk sed grep find cut realpath readlink dirname stat cp mv chmod mktemp hostname sha256sum sort id chown
   archive="$(select_backup '' backup 迁移 "$backup_intro")" || {
     migration_log INFO '用户取消了备份选择。'
@@ -3193,17 +3213,7 @@ migration_preflight() (
 
   migration_log INFO "目标数据库连接与空库检查通过；目标数据库=$MIGRATION_TARGET_DB_NAME"
   migration_log INFO "目标预检通过；服务器=$MIGRATION_TARGET_SERVER；用户=$MIGRATION_TARGET_SERVER_USERNAME；目标域名=$target_domain；目标协议=$target_scheme；目标属主=$target_owner；数据库=$MIGRATION_TARGET_DB_NAME；目标身份=$locked_identity"
-  migration_progress_break_line
-  confirm_target_operation "$mode" "$MIGRATION_SOURCE_DOMAIN" "$MIGRATION_SOURCE_URL" "$target_domain" "$target_url" "$MIGRATION_TARGET_SERVER" "$MIGRATION_TARGET_SERVER_USERNAME" "$target_wp_root" "$MIGRATION_TARGET_DB_NAME" "$archive" || {
-    migration_log INFO '用户取消站点导入，未写入目标网站或数据库。'
-    return 0
-  }
-
-  [[ "$(sha256sum "$archive" | awk '{print $1}')" == "$archive_sha256" ]] || { err '确认后备份文件发生变化，已停止导入。'; migration_log ERROR '确认后备份指纹变化。'; return 1; }
-  revalidate_migration_target_identity "$target_domain" "$locked_identity" "$MIGRATION_SOURCE_TABLE_PREFIX" || {
-    migration_log ERROR '数据库导入前目标身份重新验证失败。'
-    return 1
-  }
+  final_migration_write_gate "$target_domain" "$locked_identity" "$MIGRATION_SOURCE_TABLE_PREFIX" "$archive" "$archive_sha256" || return 1
   migration_stage_begin '数据库导入'
   migration_stage_status "正在导入目标数据库：$MIGRATION_TARGET_DB_NAME"
   if ! gzip -dc -- "$target_sql" | run_mysql "$MIGRATION_TARGET_DB_NAME"; then
