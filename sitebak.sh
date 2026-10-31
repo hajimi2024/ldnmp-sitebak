@@ -2,7 +2,7 @@
 
 set -Eeuo pipefail
 
-VERSION="0.7.45"
+VERSION="0.7.46"
 APP_NAME="LDNMP 单站备份恢复工具"
 
 WEB_ROOT="${SITEBAK_WEB_ROOT:-/home/web}"
@@ -290,6 +290,10 @@ migration_progress_end() {
 
 migration_stage_begin() {
   local message="$1"
+  if [[ "$MIGRATION_STAGE_ACTIVE" == yes ]]; then
+    err "阶段${MIGRATION_STAGE_INDEX}/8 尚未完成 100%，禁止开始下一阶段。"
+    return 1
+  fi
   migration_progress_break_line
   MIGRATION_STAGE_ACTIVE=yes
   MIGRATION_STAGE_INDEX=$((MIGRATION_STAGE_INDEX + 1))

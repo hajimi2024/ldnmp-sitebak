@@ -110,6 +110,17 @@ assert len(stage_lines) == 1, stage_lines
 assert '100% 阶段8/8：站点配置与目标网址校验完成' in stage_lines[0], stage_lines
 PY
 
+if (
+  source "$(dirname "$0")/../sitebak.sh"
+  MIGRATION_STAGE_INDEX=1
+  MIGRATION_STAGE_PERCENT=50
+  MIGRATION_STAGE_ACTIVE=yes
+  migration_stage_begin '不应开始的下一阶段'
+); then
+  printf 'FAIL: unfinished stage was allowed to overlap\n' >&2
+  exit 1
+fi
+
 python3 - "$(dirname "$0")/../sitebak.sh" <<'PY'
 import os
 import pty
