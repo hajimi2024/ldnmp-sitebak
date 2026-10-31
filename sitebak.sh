@@ -2,7 +2,7 @@
 
 set -Eeuo pipefail
 
-VERSION="0.7.44"
+VERSION="0.7.45"
 APP_NAME="LDNMP 单站备份恢复工具"
 
 WEB_ROOT="${SITEBAK_WEB_ROOT:-/home/web}"
@@ -2237,8 +2237,11 @@ replace_migration_target_files() {
   [[ -d "$stage_root" && -d "$target_root" ]] || { err '暂存目录或目标 WordPress Root 不存在。'; return 1; }
   [[ "$owner" =~ ^[0-9]+:[0-9]+$ ]] || { err '目标 WordPress Root 属主不合法。'; return 1; }
   find "$target_root" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} + || return 1
+  migration_stage_status '已清理目标 WordPress 路径，正在复制暂存文件'
   cp -a -- "$stage_root/." "$target_root/" || return 1
+  migration_stage_status '目标 WordPress 文件复制完成，正在修正文件属主'
   find "$target_root" -mindepth 1 -exec chown -h "$owner" {} + || return 1
+  migration_stage_status '目标 WordPress 文件属主修正完成，正在进行导入后校验'
 }
 
 wp_cli_docker() {
