@@ -2,7 +2,7 @@
 
 set -Eeuo pipefail
 
-VERSION="0.7.43"
+VERSION="0.7.44"
 APP_NAME="LDNMP 单站备份恢复工具"
 
 WEB_ROOT="${SITEBAK_WEB_ROOT:-/home/web}"
@@ -3193,7 +3193,7 @@ migration_preflight() (
     return 1
   }
   migration_stage_begin 'WordPress 文件替换'
-  migration_stage_status "正在替换目标 WordPress 路径：$target_wp_root"
+  migration_stage_status '正在替换目标 WordPress 路径'
   if ! replace_migration_target_files "$tmp/staged-wordpress" "$target_wp_root" "$target_owner"; then
     migration_log ERROR '目标 WordPress Root 替换失败；数据库已导入，文件可能部分写入。'
     err '目标文件替换失败，数据库已导入且文件可能部分写入；请重建空站点后再试。'
@@ -3209,7 +3209,8 @@ migration_preflight() (
     migration_log ERROR '导入后数据库连接或表前缀不一致。'
     return 1
   }
-  migration_stage_complete "目标 WordPress 路径导入完成：$target_wp_root"
+  migration_stage_complete '目标 WordPress 路径导入完成'
+  migration_log INFO "目标 WordPress 路径导入完成：$target_wp_root"
   prepare_db_client mysql || { migration_log ERROR '导入后数据库客户端重新检查失败。'; return 1; }
   target_scheme="$(detect_target_scheme "$target_domain")" || return 1
   capture_migration_target_identity "$target_domain" "$target_wp_config" "$target_scheme" "$MIGRATION_SOURCE_TABLE_PREFIX" || {
