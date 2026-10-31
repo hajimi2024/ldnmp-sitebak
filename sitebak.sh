@@ -2,7 +2,7 @@
 
 set -Eeuo pipefail
 
-VERSION="0.7.46"
+VERSION="0.7.47"
 APP_NAME="LDNMP 单站备份恢复工具"
 
 WEB_ROOT="${SITEBAK_WEB_ROOT:-/home/web}"
@@ -23,6 +23,7 @@ WPCLI_NETWORK='web_default'
 WPCLI_WORKDIR='/var/www/html'
 WPCLI_TARGET_ROOT=''
 WPCLI_RUN_USER=''
+SITEBAK_ALLOWED_MU_PLUGIN='wp-box-update-notices'
 MIGRATION_PROGRESS_ACTIVE=no
 MIGRATION_PROGRESS_PERCENT=0
 MIGRATION_PROGRESS_LINE_OPEN=no
@@ -2338,6 +2339,23 @@ run_wp_cli() {
   wp_cli_docker --path="$WPCLI_WORKDIR" "$@"
 }
 
+validate_elementor_mu_plugins() {
+  local must_use_plugins="$1" plugin mu_path
+  while IFS= read -r plugin; do
+    [[ -n "$plugin" ]] || continue
+    case "$plugin" in
+      "$SITEBAK_ALLOWED_MU_PLUGIN"|"$SITEBAK_ALLOWED_MU_PLUGIN.php")
+        mu_path="$WPCLI_TARGET_ROOT/wp-content/mu-plugins/$SITEBAK_ALLOWED_MU_PLUGIN.php"
+        [[ -f "$mu_path" && ! -L "$mu_path" ]] || return 1
+        grep -Fq " * $SITEBAK_ALLOWED_MU_PLUGIN" "$mu_path" || return 1
+        ;;
+      *)
+        return 1
+        ;;
+    esac
+  done <<< "$must_use_plugins"
+}
+
 wp_url_host() {
   local url="$1" host
   host="${url#http://}"
@@ -2420,10 +2438,13 @@ elementor_finalize() {
     return 1
   }
   must_use_plugins="$(run_wp_cli --skip-plugins --skip-themes plugin list --status=must-use --field=name)" || return 1
-  if [[ -n "$must_use_plugins" ]]; then
+  if ! validate_elementor_mu_plugins "$must_use_plugins"; then
     err '检测到无法由 WP-CLI 跳过的 Must-Use 插件，无法安全隔离 Elementor 命令。'
     migration_log ERROR 'Elementor 命令因 Must-Use 插件无法隔离而停止。'
     return 1
+  fi
+  if [[ -n "$must_use_plugins" ]]; then
+    migration_log INFO '已核验 WP Box 更新提示 MU 插件，允许其参与 Elementor 收尾；其他 MU 插件仍保持隔离要求。'
   fi
   active_plugins="$(run_wp_cli --skip-plugins --skip-themes plugin list --status=active --field=name)" || return 1
   while IFS= read -r plugin; do

@@ -25,6 +25,7 @@ wp_fail_pattern=''
 update_fail=''
 emit_known_warnings=''
 emit_unknown_stderr=''
+must_use_plugins_mock=''
 : > "$commands"
 
 revalidate_migration_target_scope() { :; }
@@ -61,7 +62,7 @@ run_wp_cli() {
     *' plugin is-installed elementor '*) [[ "$elementor_installed" == yes ]] ;;
     *' plugin is-active elementor '*) [[ "$elementor_installed" == yes ]] ;;
     *' plugin get elementor '*) printf '3.28.0\n' ;;
-    *' plugin list '*'--status=must-use'*) : ;;
+    *' plugin list '*'--status=must-use'*) printf '%s\n' "$must_use_plugins_mock" ;;
     *' plugin list '*) printf 'elementor\nelementor-pro\nwoocommerce\n' ;;
     *' config get table_prefix '*) printf 'source_\n' ;;
     *) : ;;
@@ -84,6 +85,28 @@ grep -Fq 'transient delete --all' "$commands"
 ! grep -Fq 'cache flush' "$commands"
 ! grep -Fq '请人工检查首页' "$fixture/change-output"
 grep -Fq 'GUID始终跳过' "$MIGRATION_LOG_FILE"
+
+# WP Box 更新提示 MU 插件经过内容核验后允许参与 Elementor 收尾；未知 MU 插件仍拒绝。
+WPCLI_TARGET_ROOT="$fixture/target.example/wordpress"
+mkdir -p "$WPCLI_TARGET_ROOT/wp-content/mu-plugins"
+printf '%s\n' '<?php' ' * wp-box-update-notices' > "$WPCLI_TARGET_ROOT/wp-content/mu-plugins/wp-box-update-notices.php"
+must_use_plugins_mock='wp-box-update-notices'
+elementor_installed=yes
+old_home='https://new.example'
+old_siteurl='https://new.example'
+migration_log_init allowed-mu-plugin
+finalize_wordpress_migration change-domain old.example new.example https://new.example locked source_ >/dev/null 2>&1
+grep -Fq '已核验 WP Box 更新提示 MU 插件' "$MIGRATION_LOG_FILE"
+
+must_use_plugins_mock='third-party-mu-plugin'
+migration_log_init unknown-mu-plugin
+set +e
+finalize_wordpress_migration change-domain old.example new.example https://new.example locked source_ > "$fixture/unknown-mu-output" 2>&1
+status=$?
+set -e
+[[ $status -ne 0 ]]
+grep -Fq '无法安全隔离 Elementor' "$fixture/unknown-mu-output"
+must_use_plugins_mock=''
 
 # WP-CLI 已知序列化提示完全忽略，不写终端和迁移日志。
 : > "$commands"
