@@ -2,7 +2,7 @@
 
 set -Eeuo pipefail
 
-VERSION="0.7.49"
+VERSION="0.7.50"
 APP_NAME="LDNMP 单站备份恢复工具"
 
 WEB_ROOT="${SITEBAK_WEB_ROOT:-/home/web}"
@@ -23,7 +23,6 @@ WPCLI_NETWORK='web_default'
 WPCLI_WORKDIR='/var/www/html'
 WPCLI_TARGET_ROOT=''
 WPCLI_RUN_USER=''
-SITEBAK_ALLOWED_MU_PLUGIN='wp-box-update-notices'
 MIGRATION_PROGRESS_ACTIVE=no
 MIGRATION_PROGRESS_PERCENT=0
 MIGRATION_PROGRESS_LINE_OPEN=no
@@ -2359,23 +2358,6 @@ run_wp_cli() {
   wp_cli_docker --path="$WPCLI_WORKDIR" "$@"
 }
 
-validate_elementor_mu_plugins() {
-  local must_use_plugins="$1" plugin mu_path
-  while IFS= read -r plugin; do
-    [[ -n "$plugin" ]] || continue
-    case "$plugin" in
-      "$SITEBAK_ALLOWED_MU_PLUGIN"|"$SITEBAK_ALLOWED_MU_PLUGIN.php")
-        mu_path="$WPCLI_TARGET_ROOT/wp-content/mu-plugins/$SITEBAK_ALLOWED_MU_PLUGIN.php"
-        [[ -f "$mu_path" && ! -L "$mu_path" ]] || return 1
-        grep -Fq " * $SITEBAK_ALLOWED_MU_PLUGIN" "$mu_path" || return 1
-        ;;
-      *)
-        return 1
-        ;;
-    esac
-  done <<< "$must_use_plugins"
-}
-
 wp_url_host() {
   local url="$1" host
   host="${url#http://}"
@@ -2396,6 +2378,7 @@ run_wp_search_replace() {
   local old="$1" new="$2" regex_mode="${3:-no}" stderr_file status line unknown_stderr=no
   local common=(--skip-plugins --skip-themes search-replace "$old" "$new" --all-tables-with-prefix --skip-columns=guid --precise)
   [[ "$regex_mode" != yes ]] || common+=(--regex --regex-delimiter='#')
+  mkdir -p -- "$MIGRATION_TMP_ROOT" || return 1
   stderr_file="$(mktemp "$MIGRATION_TMP_ROOT/sitebak-wpcli.XXXXXX")" || return 1
   migration_log INFO "域名替换 dry-run；旧值=$old；新值=$new；正则=$regex_mode；固定跳过列=guid"
   if run_wp_cli "${common[@]}" --dry-run >/dev/null 2>"$stderr_file"; then
@@ -2442,7 +2425,7 @@ run_wp_search_replace() {
 }
 
 elementor_finalize() {
-  local mode="$1" source_domain="$2" target_url="$3" active_plugins must_use_plugins plugin skip_plugins='' version old_url
+  local mode="$1" source_domain="$2" target_url="$3" active_plugins plugin skip_plugins='' version old_url
   if ! run_wp_cli --skip-plugins --skip-themes plugin is-installed elementor >/dev/null 2>&1; then
     migration_log INFO '未安装 Elementor，已跳过 Elementor 修复。'
     migration_progress '未安装 Elementor，已跳过 Elementor 修复。'
@@ -2457,15 +2440,6 @@ elementor_finalize() {
     err '无法读取 Elementor 版本。'
     return 1
   }
-  must_use_plugins="$(run_wp_cli --skip-plugins --skip-themes plugin list --status=must-use --field=name)" || return 1
-  if ! validate_elementor_mu_plugins "$must_use_plugins"; then
-    err '检测到无法由 WP-CLI 跳过的 Must-Use 插件，无法安全隔离 Elementor 命令。'
-    migration_log ERROR 'Elementor 命令因 Must-Use 插件无法隔离而停止。'
-    return 1
-  fi
-  if [[ -n "$must_use_plugins" ]]; then
-    migration_log INFO '已核验 WP Box 更新提示 MU 插件，允许其参与 Elementor 收尾；其他 MU 插件仍保持隔离要求。'
-  fi
   active_plugins="$(run_wp_cli --skip-plugins --skip-themes plugin list --status=active --field=name)" || return 1
   while IFS= read -r plugin; do
     [[ -n "$plugin" || "$plugin" == elementor || "$plugin" == elementor-pro ]] || continue
@@ -2580,7 +2554,10 @@ finalize_wordpress_migration() {
     migration_log INFO '更换域名模式：域名替换已处理 home/siteurl，跳过重复更新。'
   fi
   migration_progress '正在处理 Elementor。'
-  elementor_finalize "$mode" "$source_domain" "$target_url" || return 1
+  if ! elementor_finalize "$mode" "$source_domain" "$target_url"; then
+    migration_log WARN 'Elementor 收尾未完成；MU 插件和站点文件已完整保留，不阻断整站导入成功判定。'
+    migration_defer_notice 'Elementor 收尾未完成，建议进入后台手动清理缓存并重新生成 CSS。'
+  fi
   migration_progress_set 75 'Elementor 检查和修复完成。'
 
   revalidate_migration_target_scope "$target_domain" "$locked_identity" "$prefix" || return 1

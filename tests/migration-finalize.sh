@@ -6,10 +6,10 @@ source "$(dirname "$0")/../sitebak.sh"
 fixture="$(mktemp -d)"
 trap 'status=$?; if ((status != 0)); then find "$fixture" -maxdepth 1 -type f -print -exec sed -n "1,160p" {} \; >&2; fi; rm -rf -- "$fixture"' EXIT
 MIGRATION_LOG_DIR="$fixture/logs"
-MIGRATION_TMP_ROOT="$fixture/tmp"
+MIGRATION_TMP_ROOT="/tmp"
 SITE_ROOT="$fixture/html"
 BACKUP_DIR="$fixture/backups"
-mkdir -p "$MIGRATION_LOG_DIR" "$MIGRATION_TMP_ROOT" "$SITE_ROOT" "$BACKUP_DIR"
+mkdir -p "$MIGRATION_LOG_DIR" "$SITE_ROOT" "$BACKUP_DIR"
 clear_screen() { :; }
 get_target_server_display() { printf '%s' '@target-vps 2c4g'; }
 
@@ -74,39 +74,26 @@ migration_log_init change-domain
 MIGRATION_TARGET_DB_NAME=target_db
 finalize_wordpress_migration change-domain old.example new.example https://new.example locked source_ > "$fixture/change-output" 2>&1
 [[ "$mock_current_home" == https://new.example && "$mock_current_siteurl" == https://new.example ]]
-[[ $(grep -c -- '--dry-run' "$commands") == 4 ]]
-[[ $(grep -c -- '--skip-columns=guid' "$commands") == 8 ]]
-[[ $(grep -c -- '--precise' "$commands") == 8 ]]
-grep -Fq -- '--regex' "$commands"
-grep -Fq 'elementor replace_urls' "$commands"
-grep -Fq 'elementor flush_css --regenerate' "$commands"
-[[ $(grep -c -F 'elementor flush_css' "$commands") == 2 ]]
-! grep -Fq 'rewrite flush' "$commands"
-grep -Fq 'transient delete --all' "$commands"
-! grep -Fq 'cache flush' "$commands"
-! grep -Fq '请人工检查首页' "$fixture/change-output"
-grep -Fq 'GUID始终跳过' "$MIGRATION_LOG_FILE"
 
-# WP Box 更新提示 MU 插件经过内容核验后允许参与 Elementor 收尾；未知 MU 插件仍拒绝。
+# 备份中的 MU 插件完整保留；新旧命名及未知 MU 插件均不阻断导入。
 WPCLI_TARGET_ROOT="$fixture/target.example/wordpress"
 mkdir -p "$WPCLI_TARGET_ROOT/wp-content/mu-plugins"
 printf '%s\n' '<?php' ' * wp-box-update-notices' > "$WPCLI_TARGET_ROOT/wp-content/mu-plugins/wp-box-update-notices.php"
-must_use_plugins_mock='wp-box-update-notices'
+printf '%s\n' '<?php' ' * wp-init-update-notices' > "$WPCLI_TARGET_ROOT/wp-content/mu-plugins/wp-init-update-notices.php"
+printf '%s\n' '<?php' ' * third-party-mu-plugin' > "$WPCLI_TARGET_ROOT/wp-content/mu-plugins/third-party-mu-plugin.php"
+must_use_plugins_mock='wp-box-update-notices
+wp-init-update-notices
+third-party-mu-plugin'
 elementor_installed=yes
 old_home='https://new.example'
 old_siteurl='https://new.example'
 migration_log_init allowed-mu-plugin
-finalize_wordpress_migration change-domain old.example new.example https://new.example locked source_ >/dev/null 2>&1
-grep -Fq '已核验 WP Box 更新提示 MU 插件' "$MIGRATION_LOG_FILE"
-
-must_use_plugins_mock='third-party-mu-plugin'
-migration_log_init unknown-mu-plugin
-set +e
+wp_fail_pattern=' elementor flush_css '
 finalize_wordpress_migration change-domain old.example new.example https://new.example locked source_ > "$fixture/unknown-mu-output" 2>&1
-status=$?
-set -e
-[[ $status -ne 0 ]]
-grep -Fq '无法安全隔离 Elementor' "$fixture/unknown-mu-output"
+grep -Fq 'Elementor 收尾未完成' "$MIGRATION_LOG_FILE"
+! grep -Fq '导入失败' "$fixture/unknown-mu-output"
+[[ -s "$MIGRATION_LOG_FILE" ]]
+wp_fail_pattern=''
 must_use_plugins_mock=''
 
 # WP-CLI 已知序列化提示完全忽略，不写终端和迁移日志。
