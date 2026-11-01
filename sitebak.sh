@@ -2,7 +2,7 @@
 
 set -Eeuo pipefail
 
-VERSION="0.7.48"
+VERSION="0.7.49"
 APP_NAME="LDNMP 单站备份恢复工具"
 
 WEB_ROOT="${SITEBAK_WEB_ROOT:-/home/web}"
@@ -2488,9 +2488,11 @@ elementor_finalize() {
       run_wp_cli "${safe_flags[@]}" elementor replace_urls "$old_url" "$target_url" >/dev/null || return 1
     done
   fi
+  migration_progress '正在清理 Elementor 缓存。'
+  run_wp_cli "${safe_flags[@]}" elementor flush_css >/dev/null || return 1
   migration_progress '正在重新生成 Elementor CSS。'
   run_wp_cli "${safe_flags[@]}" elementor flush_css --regenerate >/dev/null || return 1
-  migration_log INFO "Elementor 修复完成；版本=$version"
+  migration_log INFO "Elementor 缓存已清理并重新生成 CSS；版本=$version"
 }
 
 finalize_wordpress_migration() {

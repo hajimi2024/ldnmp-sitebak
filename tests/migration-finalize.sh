@@ -80,6 +80,7 @@ finalize_wordpress_migration change-domain old.example new.example https://new.e
 grep -Fq -- '--regex' "$commands"
 grep -Fq 'elementor replace_urls' "$commands"
 grep -Fq 'elementor flush_css --regenerate' "$commands"
+[[ $(grep -c -F 'elementor flush_css' "$commands") == 2 ]]
 ! grep -Fq 'rewrite flush' "$commands"
 grep -Fq 'transient delete --all' "$commands"
 ! grep -Fq 'cache flush' "$commands"
