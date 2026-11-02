@@ -2,7 +2,7 @@
 
 set -Eeuo pipefail
 
-VERSION="0.7.50"
+VERSION="0.7.51"
 APP_NAME="LDNMP 单站备份恢复工具"
 
 WEB_ROOT="${SITEBAK_WEB_ROOT:-/home/web}"
@@ -2462,11 +2462,42 @@ elementor_finalize() {
       run_wp_cli "${safe_flags[@]}" elementor replace_urls "$old_url" "$target_url" >/dev/null || return 1
     done
   fi
-  migration_progress '正在清理 Elementor 缓存。'
+  migration_progress '正在清理 Elementor 文件和数据。'
+  # 对齐后台“清除文件和数据”：先执行官方清理，再删除 Elementor 专属
+  # 生成 CSS 文件，最后在清理后的目录上重新生成 CSS。只触及 Elementor
+  # 自己的生成目录，不删除媒体库或其他插件文件。
   run_wp_cli "${safe_flags[@]}" elementor flush_css >/dev/null || return 1
+  local elementor_css_dir="${WPCLI_TARGET_ROOT:-}/wp-content/uploads/elementor/css"
+  if [[ -n "${WPCLI_TARGET_ROOT:-}" && -d "$elementor_css_dir" ]]; then
+    find "$elementor_css_dir" -type f -delete || return 1
+  fi
+  if run_wp_cli "${safe_flags[@]}" help cache flush >/dev/null 2>&1; then
+    run_wp_cli "${safe_flags[@]}" cache flush >/dev/null || return 1
+  fi
   migration_progress '正在重新生成 Elementor CSS。'
   run_wp_cli "${safe_flags[@]}" elementor flush_css --regenerate >/dev/null || return 1
-  migration_log INFO "Elementor 缓存已清理并重新生成 CSS；版本=$version"
+  migration_log INFO "Elementor 文件和数据缓存已清理并重新生成 CSS；版本=$version"
+}
+
+elementor_clear_files_and_data() {
+  local active_plugins plugin skip_plugins='' elementor_css_dir
+  run_wp_cli --skip-plugins --skip-themes plugin is-active elementor >/dev/null 2>&1 || return 0
+  active_plugins="$(run_wp_cli --skip-plugins --skip-themes plugin list --status=active --field=name)" || return 1
+  while IFS= read -r plugin; do
+    [[ -n "$plugin" ]] || continue
+    case "$plugin" in elementor|elementor-pro) ;; *) skip_plugins+="${skip_plugins:+,}$plugin" ;; esac
+  done <<< "$active_plugins"
+  local safe_flags=(--skip-themes)
+  [[ -z "$skip_plugins" ]] || safe_flags+=("--skip-plugins=$skip_plugins")
+  run_wp_cli "${safe_flags[@]}" elementor flush_css >/dev/null || return 1
+  elementor_css_dir="${WPCLI_TARGET_ROOT:-}/wp-content/uploads/elementor/css"
+  if [[ -n "${WPCLI_TARGET_ROOT:-}" && -d "$elementor_css_dir" ]]; then
+    find "$elementor_css_dir" -type f -delete || return 1
+  fi
+  if run_wp_cli "${safe_flags[@]}" help cache flush >/dev/null 2>&1; then
+    run_wp_cli "${safe_flags[@]}" cache flush >/dev/null || return 1
+  fi
+  run_wp_cli "${safe_flags[@]}" elementor flush_css --regenerate >/dev/null || return 1
 }
 
 finalize_wordpress_migration() {
@@ -2593,6 +2624,12 @@ finalize_wordpress_migration() {
   run_wp_cli --skip-plugins --skip-themes core is-installed >/dev/null || return 1
   revalidate_migration_target_scope "$target_domain" "$locked_identity" "$prefix" || return 1
   migration_progress_set 97 '表前缀、安装状态和目标身份最终复核完成。'
+  migration_progress '正在执行 Elementor 最终文件和数据清理。'
+  if ! elementor_clear_files_and_data; then
+    migration_log WARN 'Elementor 最终文件和数据清理未完成；核心导入校验仍已通过。'
+    migration_defer_notice 'Elementor 最终缓存清理未完成，建议进入后台手动点击“清除文件和数据”。'
+  fi
+  migration_progress_set 100 'WordPress 收尾与最终验证完成。'
   migration_log INFO "WordPress 收尾完成；源域名=$source_domain；目标域名=$target_domain；目标网址=$target_url；数据库=$MIGRATION_TARGET_DB_NAME；表前缀=$prefix；GUID始终跳过"
 }
 
