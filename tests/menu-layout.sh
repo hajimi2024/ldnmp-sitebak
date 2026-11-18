@@ -52,7 +52,7 @@ return_to_menu wide < <(printf '0\n') > "$fixture/return-menu-wide"
   delete_backup_menu() { [[ ${1:-} == backup ]]; printf '\nACTION:delete\n'; }
   update_and_reload() { printf '\nACTION:update\n'; }
   migration_menu() { printf '\nACTION:migration\n'; }
-  main_menu < <(printf '%s\n' 1 2 3 4 5 6 7 8 0)
+  main_menu < <(printf '%s\n' 1 2 3 4 5 6 7 00 0)
 ) > "$fixture/routing"
 
 python3 - "$fixture" <<'PY'
@@ -84,18 +84,20 @@ assert_layout('main-wide', [
     ('1.  列出 WordPress 站点', '2.  备份单个站点'),
     ('3.  查看备份文件', '4.  恢复单个站点'),
     ('5.  快照管理', '6.  删除旧备份'),
-], separator_count=3)
+], separator_count=4)
 assert_layout('snapshots-wide', [
     ('1.  创建完整快照', '2.  查看快照'),
     ('3.  恢复完整快照', '4.  删除快照'),
 ])
 
 main = read_plain('main-wide').splitlines()
-assert main.count('-' * 24) == 3, main
+assert main.count('-' * 24) == 4, main
 operation_index = main.index('    操作')
 assert main[operation_index:operation_index + 3] == ['    操作', '-' * 51, '1.  列出 WordPress 站点                 2.  备份单个站点'], main
-site_import_index = main.index('8.  站点导入 📁')
-assert main[site_import_index - 1:site_import_index + 2] == ['-' * 24, '8.  站点导入 📁', '-' * 24], main
+site_import_index = main.index('7.  站点导入 📁')
+assert main[site_import_index - 1:site_import_index + 2] == ['-' * 24, '7.  站点导入 📁', '-' * 24], main
+update_index = main.index('00. 更新脚本 ♻️')
+assert main[update_index - 1:update_index + 2] == ['-' * 24, '00. 更新脚本 ♻️', '-' * 24], main
 assert main[-3:] == ['-' * 24, '0.  退出', '-' * 24], main
 
 assert_layout('migration-wide', [
@@ -111,15 +113,15 @@ assert migration[third_index + 1:third_index + 4] == ['-' * 24, '0.  返回上�
 narrow = read_plain('main-narrow')
 assert '1.  列出 WordPress 站点\n2.  备份单个站点' in narrow
 assert '2.  备份单个站点\n\n3.  查看备份文件' in narrow
-assert '7.  更新脚本 ♻️\n' in narrow
+assert '7.  站点导入 📁\n' in narrow
 assert ('操作\n' + '-' * 51 + '\n1.  列出 WordPress 站点' in narrow), narrow
-assert ('7.  更新脚本 ♻️\n\n' + '-' * 24 + '\n8.  站点导入 📁\n' +
+assert ('7.  站点导入 📁\n' + '-' * 24 + '\n00. 更新脚本 ♻️\n' +
         '-' * 24 + '\n0.  退出') in narrow
 assert '                 2.  备份单个站点' not in narrow
 
 actions = [line[len('ACTION:'):] for line in
            (root / 'routing').read_text().splitlines() if line.startswith('ACTION:')]
-assert actions == ['sites', 'backup', 'list-backups', 'restore', 'snapshots', 'delete', 'update', 'migration'], actions
+assert actions == ['sites', 'backup', 'list-backups', 'restore', 'snapshots', 'delete', 'migration', 'update'], actions
 
 for name, title, body in [
     ('domain-selection', '请选择站点：', '1. example.com'),

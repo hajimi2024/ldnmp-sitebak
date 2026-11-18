@@ -532,10 +532,10 @@ render_main_menu() {
   menu_row_gap
   menu_pair '5.  快照管理' '6.  删除旧备份' 12
   menu_row_gap
-  menu_pair '7.  更新脚本 ♻️' '' 12
-  menu_row_gap
   menu_separator
-  menu_item '8.  站点导入 📁'; printf '\n'
+  menu_item '7.  站点导入 📁'; printf '\n'
+  menu_separator
+  menu_item '00. 更新脚本 ♻️'; printf '\n'
   menu_separator
   menu_item '0.  退出'; printf '\n'
   menu_separator
@@ -3322,8 +3322,8 @@ main_menu() {
       4) run_menu_action restore_menu ;;
       5) snapshots_menu ;;
       6) run_menu_action delete_backup_menu backup ;;
-      7) update_and_reload ;;
-      8) migration_menu ;;
+      7) migration_menu ;;
+      00) update_and_reload ;;
       0) exit 0 ;;
       *) warn "无效的选择，请重试。"; sleep 1 ;;
     esac
