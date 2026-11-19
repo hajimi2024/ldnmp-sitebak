@@ -60,6 +60,12 @@ def run(actions, status=0, screens=1, mode='', args=(), term='xterm'):
         pid = None
         assert os.waitstatus_to_exitcode(result) == status, output
         assert output.count(b'<ENTER>') == output.count(b'<LEAVE>') == screens, output
+        clear_view = b'\x1b[H\x1b[2J\x1b[3J'
+        should_clear = term != 'dumb' and mode not in ('redirected', 'update-ok')
+        assert output.count(clear_view) == int(should_clear), output
+        assert output.count(b'\x1b[3J') == int(should_clear), output
+        if should_clear:
+            assert output.endswith(clear_view), output
         if screens:
             assert output.index(b'<ENTER>') < output.index(b'PAGE') < output.rindex(b'<LEAVE>'), output
         return output
@@ -87,5 +93,6 @@ run([(b'PAGE', b'0\n')], mode='redirected', screens=0)
 plain = subprocess.run(['bash', '-ec', script, 'test', source, ''],
                        input=b'0\n', capture_output=True, check=True)
 assert b'<ENTER>' not in plain.stdout and b'<LEAVE>' not in plain.stdout
+assert b'\x1b[2J' not in plain.stdout
 print('PASS: interactive menu screen lifecycle')
 PY

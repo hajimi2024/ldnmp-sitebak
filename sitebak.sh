@@ -2,7 +2,7 @@
 
 set -Eeuo pipefail
 
-VERSION="0.7.52"
+VERSION="0.7.53"
 APP_NAME="LDNMP 单站备份恢复工具"
 
 WEB_ROOT="${SITEBAK_WEB_ROOT:-/home/web}"
@@ -445,13 +445,13 @@ clear_screen() {
 enter_menu_screen() {
   local enter leave
   [[ -t 0 && -t 1 && -t 2 && -n ${TERM:-} && $TERM != dumb ]] || return 0
+  trap 'finish_menu_screen' EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
   enter="$(tput smcup 2>/dev/null)" && leave="$(tput rmcup 2>/dev/null)" || return 0
   [[ -n "$enter" && -n "$leave" ]] || return 0
 
   MENU_SCREEN_LEAVE="$leave"
-  trap 'leave_menu_screen' EXIT
-  trap 'exit 130' INT
-  trap 'exit 143' TERM
   printf '%s' "$enter"
 }
 
@@ -459,6 +459,12 @@ leave_menu_screen() {
   [[ -n ${MENU_SCREEN_LEAVE:-} ]] || return 0
   printf '\033[0m\033[?25h%s' "$MENU_SCREEN_LEAVE" || true
   MENU_SCREEN_LEAVE=''
+}
+
+finish_menu_screen() {
+  leave_menu_screen
+  # Clear the primary viewport and scrollback after leaving the alternate screen.
+  printf '\033[0m\033[?25h\033[H\033[2J\033[3J' || true
 }
 
 need_root() {
