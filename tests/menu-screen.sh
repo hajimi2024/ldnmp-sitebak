@@ -33,7 +33,7 @@ shift 2
 main "$@"
 '''
 
-def run(actions, status=0, screens=1, mode='', args=(), term='xterm'):
+def run(actions, status=0, mode='', args=(), term='xterm'):
     pid, fd = pty.fork()
     if pid == 0:
         os.environ['TERM'] = term
@@ -59,15 +59,14 @@ def run(actions, status=0, screens=1, mode='', args=(), term='xterm'):
         _, result = os.waitpid(pid, 0)
         pid = None
         assert os.waitstatus_to_exitcode(result) == status, output
-        assert output.count(b'<ENTER>') == output.count(b'<LEAVE>') == screens, output
+        assert b'<ENTER>' not in output and b'<LEAVE>' not in output, output
+        assert b'\x1b[?1049' not in output, output
         clear_view = b'\x1b[H\x1b[2J\x1b[3J'
         should_clear = term != 'dumb' and mode not in ('redirected', 'update-ok')
         assert output.count(clear_view) == int(should_clear), output
         assert output.count(b'\x1b[3J') == int(should_clear), output
         if should_clear:
             assert output.endswith(clear_view), output
-        if screens:
-            assert output.index(b'<ENTER>') < output.index(b'PAGE') < output.rindex(b'<LEAVE>'), output
         return output
     finally:
         os.close(fd)
@@ -87,9 +86,9 @@ run([(prompt, signal.SIGTERM)], status=143)
 assert b'TASK_CLEANUP' in run([(prompt, b'1\n'), (b'TASK_RUNNING', b'\x03')], status=130)
 run([(prompt, b'00\n')], mode='update-ok')
 run([(prompt, b'00\n'), ('退出码'.encode(), b'0\n0\n')], mode='update-fail')
-run([(prompt, b'0\n')], term='dumb', screens=0)
-run([(prompt, b'0\n')], mode='missing', screens=0)
-run([(b'PAGE', b'0\n')], mode='redirected', screens=0)
+run([(prompt, b'0\n')], term='dumb')
+run([(prompt, b'0\n')], mode='missing')
+run([(b'PAGE', b'0\n')], mode='redirected')
 plain = subprocess.run(['bash', '-ec', script, 'test', source, ''],
                        input=b'0\n', capture_output=True, check=True)
 assert b'<ENTER>' not in plain.stdout and b'<LEAVE>' not in plain.stdout

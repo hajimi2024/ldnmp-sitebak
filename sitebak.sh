@@ -2,7 +2,7 @@
 
 set -Eeuo pipefail
 
-VERSION="0.7.53"
+VERSION="0.7.54"
 APP_NAME="LDNMP 单站备份恢复工具"
 
 WEB_ROOT="${SITEBAK_WEB_ROOT:-/home/web}"
@@ -442,28 +442,15 @@ clear_screen() {
   fi
 }
 
-enter_menu_screen() {
-  local enter leave
+install_menu_exit_cleanup() {
   [[ -t 0 && -t 1 && -t 2 && -n ${TERM:-} && $TERM != dumb ]] || return 0
   trap 'finish_menu_screen' EXIT
   trap 'exit 130' INT
   trap 'exit 143' TERM
-  enter="$(tput smcup 2>/dev/null)" && leave="$(tput rmcup 2>/dev/null)" || return 0
-  [[ -n "$enter" && -n "$leave" ]] || return 0
-
-  MENU_SCREEN_LEAVE="$leave"
-  printf '%s' "$enter"
-}
-
-leave_menu_screen() {
-  [[ -n ${MENU_SCREEN_LEAVE:-} ]] || return 0
-  printf '\033[0m\033[?25h%s' "$MENU_SCREEN_LEAVE" || true
-  MENU_SCREEN_LEAVE=''
 }
 
 finish_menu_screen() {
-  leave_menu_screen
-  # Clear the primary viewport and scrollback after leaving the alternate screen.
+  # Keep native scrolling until the interactive menu process exits.
   printf '\033[0m\033[?25h\033[H\033[2J\033[3J' || true
 }
 
@@ -3017,7 +3004,6 @@ update_and_reload() {
   fi
 
   info "正在自动载入新版菜单..."
-  leave_menu_screen
   if shopt -q execfail; then
     execfail_was_enabled=yes
   fi
@@ -3026,7 +3012,6 @@ update_and_reload() {
     return 0
   fi
   [[ "$execfail_was_enabled" == yes ]] || shopt -u execfail
-  enter_menu_screen
   err "新版脚本已安装，但自动载入失败。请退出后重新输入 kk。"
   return_to_menu
 }
@@ -3395,7 +3380,7 @@ main() {
   case "${1:-}" in
     "")
       need_root
-      enter_menu_screen
+      install_menu_exit_cleanup
       main_menu
       ;;
     list)
@@ -3443,7 +3428,7 @@ main() {
       ;;
     migrate)
       need_root
-      enter_menu_screen
+      install_menu_exit_cleanup
       migration_menu
       ;;
     update)
