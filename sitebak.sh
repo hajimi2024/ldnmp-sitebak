@@ -2,7 +2,7 @@
 
 set -Eeuo pipefail
 
-VERSION="0.7.54"
+VERSION="0.7.55"
 APP_NAME="LDNMP 单站备份恢复工具"
 
 WEB_ROOT="${SITEBAK_WEB_ROOT:-/home/web}"
@@ -437,8 +437,9 @@ pause() {
 }
 
 clear_screen() {
-  if [[ -t 1 && ${TERM:-} != dumb ]]; then
-    command -v clear >/dev/null 2>&1 && clear -x 2>/dev/null || true
+  if [[ -t 1 && -n ${TERM:-} && $TERM != dumb ]]; then
+    # Start each page with a fresh viewport and scrollback in the primary screen.
+    printf '\033[H\033[2J\033[3J' || true
   fi
 }
 
@@ -450,8 +451,8 @@ install_menu_exit_cleanup() {
 }
 
 finish_menu_screen() {
-  # Keep native scrolling until the interactive menu process exits.
-  printf '\033[0m\033[?25h\033[H\033[2J\033[3J' || true
+  printf '\033[0m\033[?25h' || true
+  clear_screen
 }
 
 need_root() {
