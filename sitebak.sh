@@ -2,7 +2,7 @@
 
 set -Eeuo pipefail
 
-VERSION="0.7.51"
+VERSION="0.7.52"
 APP_NAME="LDNMP 单站备份恢复工具"
 
 WEB_ROOT="${SITEBAK_WEB_ROOT:-/home/web}"
@@ -438,8 +438,27 @@ pause() {
 
 clear_screen() {
   if [[ -t 1 && ${TERM:-} != dumb ]]; then
-    command -v clear >/dev/null 2>&1 && clear || true
+    command -v clear >/dev/null 2>&1 && clear -x 2>/dev/null || true
   fi
+}
+
+enter_menu_screen() {
+  local enter leave
+  [[ -t 0 && -t 1 && -t 2 && -n ${TERM:-} && $TERM != dumb ]] || return 0
+  enter="$(tput smcup 2>/dev/null)" && leave="$(tput rmcup 2>/dev/null)" || return 0
+  [[ -n "$enter" && -n "$leave" ]] || return 0
+
+  MENU_SCREEN_LEAVE="$leave"
+  trap 'leave_menu_screen' EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  printf '%s' "$enter"
+}
+
+leave_menu_screen() {
+  [[ -n ${MENU_SCREEN_LEAVE:-} ]] || return 0
+  printf '\033[0m\033[?25h%s' "$MENU_SCREEN_LEAVE" || true
+  MENU_SCREEN_LEAVE=''
 }
 
 need_root() {
@@ -2980,7 +2999,7 @@ update_self() {
 }
 
 update_and_reload() {
-  local status
+  local status execfail_was_enabled=no
   set +e
   ( set -Eeuo pipefail; update_self )
   status=$?
@@ -2992,9 +3011,16 @@ update_and_reload() {
   fi
 
   info "正在自动载入新版菜单..."
+  leave_menu_screen
+  if shopt -q execfail; then
+    execfail_was_enabled=yes
+  fi
+  shopt -s execfail
   if exec "$INSTALL_PATH"; then
     return 0
   fi
+  [[ "$execfail_was_enabled" == yes ]] || shopt -u execfail
+  enter_menu_screen
   err "新版脚本已安装，但自动载入失败。请退出后重新输入 kk。"
   return_to_menu
 }
@@ -3362,6 +3388,8 @@ EOF
 main() {
   case "${1:-}" in
     "")
+      need_root
+      enter_menu_screen
       main_menu
       ;;
     list)
@@ -3409,6 +3437,7 @@ main() {
       ;;
     migrate)
       need_root
+      enter_menu_screen
       migration_menu
       ;;
     update)
